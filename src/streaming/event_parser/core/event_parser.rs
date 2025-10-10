@@ -12,9 +12,8 @@ use crate::streaming::{
             is_dev_address_in_signature,
         },
         protocols::{
-            bonk::{parser::BONK_PROGRAM_ID, BonkPoolCreateEvent, BonkTradeEvent},
-            pumpfun::{parser::PUMPFUN_PROGRAM_ID, PumpFunCreateTokenEvent, PumpFunTradeEvent},
-            pumpswap::{parser::PUMPSWAP_PROGRAM_ID, PumpSwapBuyEvent, PumpSwapSellEvent},
+            bonk::parser::BONK_PROGRAM_ID, pumpfun::parser::PUMPFUN_PROGRAM_ID,
+            pumpswap::parser::PUMPSWAP_PROGRAM_ID,
             raydium_amm_v4::parser::RAYDIUM_AMM_V4_PROGRAM_ID,
             raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID,
             raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID,
@@ -23,7 +22,10 @@ use crate::streaming::{
     },
 };
 use prost_types::Timestamp;
-use solana_sdk::{bs58, message::compiled_instruction::CompiledInstruction, pubkey::Pubkey, signature::Signature, transaction::VersionedTransaction};
+use solana_sdk::{
+    bs58, message::compiled_instruction::CompiledInstruction, pubkey::Pubkey, signature::Signature,
+    transaction::VersionedTransaction,
+};
 use solana_transaction_status::{
     EncodedConfirmedTransactionWithStatusMeta, InnerInstruction, InnerInstructions, UiInstruction,
 };
@@ -81,11 +83,11 @@ impl Default for AccountPubkeyCache {
 
 /// 内联指令事件解析器
 pub type InnerInstructionEventParser =
-    fn(data: &[u8], metadata: EventMetadata) -> Option<Box<dyn UnifiedEvent>>;
+    fn(data: &[u8], metadata: EventMetadata) -> Option<UnifiedEvent>;
 
 /// 指令事件解析器
 pub type InstructionEventParser =
-    fn(data: &[u8], accounts: &[Pubkey], metadata: EventMetadata) -> Option<Box<dyn UnifiedEvent>>;
+    fn(data: &[u8], accounts: &[Pubkey], metadata: EventMetadata) -> Option<UnifiedEvent>;
 
 /// 通用事件解析器配置
 #[derive(Debug, Clone)]
@@ -200,7 +202,7 @@ impl EventParser {
         inner_instructions: &[yellowstone_grpc_proto::prelude::InnerInstructions],
         bot_wallet: Option<Pubkey>,
         transaction_index: Option<u64>,
-        callback: Arc<dyn for<'a> Fn(&'a Box<dyn UnifiedEvent>) + Send + Sync>,
+        callback: Arc<dyn for<'a> Fn(&'a UnifiedEvent) + Send + Sync>,
     ) -> anyhow::Result<()> {
         // 获取交易的指令和账户
         let mut accounts = accounts.to_vec();
@@ -283,7 +285,7 @@ impl EventParser {
         inner_instructions: &[InnerInstructions],
         bot_wallet: Option<Pubkey>,
         transaction_index: Option<u64>,
-        callback: Arc<dyn for<'a> Fn(&'a Box<dyn UnifiedEvent>) + Send + Sync>,
+        callback: Arc<dyn for<'a> Fn(&'a UnifiedEvent) + Send + Sync>,
     ) -> anyhow::Result<()> {
         // 获取交易的指令和账户
         let compiled_instructions = transaction.message.instructions();
@@ -356,11 +358,11 @@ impl EventParser {
         bot_wallet: Option<Pubkey>,
         transaction_index: Option<u64>,
         inner_instructions: &[InnerInstructions],
-        callback: Arc<dyn Fn(Box<dyn UnifiedEvent>) + Send + Sync>,
+        callback: Arc<dyn Fn(UnifiedEvent) + Send + Sync>,
     ) -> anyhow::Result<()> {
         // 创建适配器回调，将所有权回调转换为引用回调
-        let adapter_callback = Arc::new(move |event: &Box<dyn UnifiedEvent>| {
-            callback(event.clone_boxed());
+        let adapter_callback = Arc::new(move |event: &UnifiedEvent| {
+            callback(event.clone());
         });
         self.parse_versioned_transaction(
             &versioned_tx,
@@ -387,7 +389,7 @@ impl EventParser {
         bot_wallet: Option<Pubkey>,
         transaction_index: Option<u64>,
         inner_instructions: &[InnerInstructions],
-        callback: Arc<dyn for<'a> Fn(&'a Box<dyn UnifiedEvent>) + Send + Sync>,
+        callback: Arc<dyn for<'a> Fn(&'a UnifiedEvent) + Send + Sync>,
     ) -> anyhow::Result<()> {
         let accounts: Vec<Pubkey> = versioned_tx.message.static_account_keys().to_vec();
         self.parse_instruction_events_from_versioned_transaction(
@@ -415,11 +417,11 @@ impl EventParser {
         recv_us: i64,
         bot_wallet: Option<Pubkey>,
         transaction_index: Option<u64>,
-        callback: Arc<dyn Fn(Box<dyn UnifiedEvent>) + Send + Sync>,
+        callback: Arc<dyn Fn(UnifiedEvent) + Send + Sync>,
     ) -> anyhow::Result<()> {
         // 创建适配器回调，将所有权回调转换为引用回调
-        let adapter_callback = Arc::new(move |event: &Box<dyn UnifiedEvent>| {
-            callback(event.clone_boxed());
+        let adapter_callback = Arc::new(move |event: &UnifiedEvent| {
+            callback(event.clone());
         });
         // 调用原始方法
         self.parse_grpc_transaction(
@@ -444,7 +446,7 @@ impl EventParser {
         recv_us: i64,
         bot_wallet: Option<Pubkey>,
         transaction_index: Option<u64>,
-        callback: Arc<dyn for<'a> Fn(&'a Box<dyn UnifiedEvent>) + Send + Sync>,
+        callback: Arc<dyn for<'a> Fn(&'a UnifiedEvent) + Send + Sync>,
     ) -> anyhow::Result<()> {
         if let Some(transition) = grpc_tx.transaction {
             if let Some(message) = &transition.message {
@@ -508,7 +510,7 @@ impl EventParser {
         &self,
         signature: Signature,
         transaction: EncodedConfirmedTransactionWithStatusMeta,
-        callback: Arc<dyn for<'a> Fn(&'a Box<dyn UnifiedEvent>) + Send + Sync>,
+        callback: Arc<dyn for<'a> Fn(&'a UnifiedEvent) + Send + Sync>,
     ) -> anyhow::Result<()> {
         let versioned_tx = match transaction.transaction.transaction.decode() {
             Some(tx) => tx,
@@ -628,7 +630,7 @@ impl EventParser {
         outer_index: i64,
         inner_index: Option<i64>,
         transaction_index: Option<u64>,
-    ) -> Option<Box<dyn UnifiedEvent>> {
+    ) -> Option<UnifiedEvent> {
         if let Some(parser) = config.inner_instruction_parser {
             let timestamp = block_time.unwrap_or(Timestamp { seconds: 0, nanos: 0 });
             let block_time_ms = timestamp.seconds * 1000 + (timestamp.nanos as i64) / 1_000_000;
@@ -665,7 +667,7 @@ impl EventParser {
         outer_index: i64,
         inner_index: Option<i64>,
         transaction_index: Option<u64>,
-    ) -> Option<Box<dyn UnifiedEvent>> {
+    ) -> Option<UnifiedEvent> {
         if let Some(parser) = config.instruction_parser {
             let timestamp = block_time.unwrap_or(Timestamp { seconds: 0, nanos: 0 });
             let block_time_ms = timestamp.seconds * 1000 + (timestamp.nanos as i64) / 1_000_000;
@@ -701,7 +703,7 @@ impl EventParser {
         inner_index: Option<i64>,
         transaction_index: Option<u64>,
         config: &GenericEventParseConfig,
-    ) -> Vec<Box<dyn UnifiedEvent>> {
+    ) -> Vec<UnifiedEvent> {
         // Use SIMD-optimized data validation with correct discriminator length
         let discriminator_len = config.inner_instruction_discriminator.len();
         if !SimdUtils::validate_instruction_data_simd(
@@ -751,7 +753,7 @@ impl EventParser {
         inner_index: Option<i64>,
         transaction_index: Option<u64>,
         config: &GenericEventParseConfig,
-    ) -> Vec<Box<dyn UnifiedEvent>> {
+    ) -> Vec<UnifiedEvent> {
         // Use SIMD-optimized data validation with correct discriminator length
         let discriminator_len = config.inner_instruction_discriminator.len();
         if !SimdUtils::validate_instruction_data_simd(
@@ -803,7 +805,7 @@ impl EventParser {
         bot_wallet: Option<Pubkey>,
         transaction_index: Option<u64>,
         inner_instructions: Option<&InnerInstructions>,
-        callback: Arc<dyn for<'a> Fn(&'a Box<dyn UnifiedEvent>) + Send + Sync>,
+        callback: Arc<dyn for<'a> Fn(&'a UnifiedEvent) + Send + Sync>,
     ) -> anyhow::Result<()> {
         let program_id = accounts[instruction.program_id_index as usize];
         if !self.should_handle(&program_id) {
@@ -860,7 +862,7 @@ impl EventParser {
 
         for (_disc, config, mut event) in all_results {
             // 阻塞处理：原有的同步逻辑
-            let mut inner_instruction_event: Option<Box<dyn UnifiedEvent>> = None;
+            let mut inner_instruction_event: Option<UnifiedEvent> = None;
             if inner_instructions.is_some() {
                 let inner_instructions_ref = inner_instructions.unwrap();
 
@@ -887,9 +889,9 @@ impl EventParser {
                     });
 
                     let swap_data_handle = s.spawn(|| {
-                        if !event.swap_data_is_parsed() {
+                        if !event.metadata().swap_data.is_some() {
                             parse_swap_data_from_next_instructions(
-                                &*event,
+                                &event,
                                 inner_instructions_ref,
                                 inner_index.unwrap_or(-1_i64) as i8,
                                 &accounts,
@@ -905,7 +907,7 @@ impl EventParser {
 
                 inner_instruction_event = inner_event_result;
                 if let Some(swap_data) = swap_data_result {
-                    event.set_swap_data(swap_data);
+                    event.metadata_mut().set_swap_data(swap_data);
                 }
             }
 
@@ -916,10 +918,10 @@ impl EventParser {
 
             // 合并事件
             if let Some(inner_instruction_event) = inner_instruction_event {
-                event.merge(&*inner_instruction_event);
+                // event.merge(&*inner_instruction_event);
             }
             // 设置处理时间（使用高性能时钟）
-            event.set_handle_us(elapsed_micros_since(recv_us));
+            event.metadata_mut().handle_us = elapsed_micros_since(recv_us);
             event = process_event(event, bot_wallet);
             callback(&event);
         }
@@ -942,7 +944,7 @@ impl EventParser {
         bot_wallet: Option<Pubkey>,
         transaction_index: Option<u64>,
         inner_instructions: Option<&yellowstone_grpc_proto::prelude::InnerInstructions>,
-        callback: Arc<dyn for<'a> Fn(&'a Box<dyn UnifiedEvent>) + Send + Sync>,
+        callback: Arc<dyn for<'a> Fn(&'a UnifiedEvent) + Send + Sync>,
     ) -> anyhow::Result<()> {
         let program_id = accounts[instruction.program_id_index as usize];
         if !self.should_handle(&program_id) {
@@ -999,7 +1001,7 @@ impl EventParser {
 
         for (_disc, config, mut event) in all_results {
             // 阻塞处理：原有的同步逻辑
-            let mut inner_instruction_event: Option<Box<dyn UnifiedEvent>> = None;
+            let mut inner_instruction_event: Option<UnifiedEvent> = None;
             if inner_instructions.is_some() {
                 let inner_instructions_ref = inner_instructions.unwrap();
 
@@ -1026,9 +1028,9 @@ impl EventParser {
                     });
 
                     let swap_data_handle = s.spawn(|| {
-                        if !event.swap_data_is_parsed() {
+                        if !event.metadata().swap_data.is_some() {
                             parse_swap_data_from_next_grpc_instructions(
-                                &*event,
+                                &event,
                                 inner_instructions_ref,
                                 inner_index.unwrap_or(-1_i64) as i8,
                                 &accounts,
@@ -1044,7 +1046,7 @@ impl EventParser {
 
                 inner_instruction_event = inner_event_result;
                 if let Some(swap_data) = swap_data_result {
-                    event.set_swap_data(swap_data);
+                    event.metadata_mut().set_swap_data(swap_data);
                 }
             }
 
@@ -1055,10 +1057,10 @@ impl EventParser {
 
             // 合并事件
             if let Some(inner_instruction_event) = inner_instruction_event {
-                event.merge(&*inner_instruction_event);
+                // event.merge(&*inner_instruction_event);
             }
             // 设置处理时间（使用高性能时钟）
-            event.set_handle_us(elapsed_micros_since(recv_us));
+            event.metadata_mut().handle_us = elapsed_micros_since(recv_us);
             event = process_event(event, bot_wallet);
             callback(&event);
         }
@@ -1074,54 +1076,66 @@ impl EventParser {
     // }
 }
 
-fn process_event(
-    mut event: Box<dyn UnifiedEvent>,
-    bot_wallet: Option<Pubkey>,
-) -> Box<dyn UnifiedEvent> {
-    let signature = *event.signature(); // Copy the signature to avoid borrowing issues
-    if let Some(token_info) = event.as_any().downcast_ref::<PumpFunCreateTokenEvent>() {
-        add_dev_address(&signature, token_info.user);
-        if token_info.creator != Pubkey::default() && token_info.creator != token_info.user {
-            add_dev_address(&signature, token_info.creator);
+fn process_event(mut event: UnifiedEvent, bot_wallet: Option<Pubkey>) -> UnifiedEvent {
+    let signature = event.metadata().signature; // Copy the signature to avoid borrowing issues
+    match event {
+        UnifiedEvent::PumpFunCreateTokenEvent(token_info) => {
+            add_dev_address(&signature, token_info.user);
+            if token_info.creator != Pubkey::default() && token_info.creator != token_info.user {
+                add_dev_address(&signature, token_info.creator);
+            }
+            UnifiedEvent::PumpFunCreateTokenEvent(token_info)
         }
-    } else if let Some(trade_info) = event.as_any_mut().downcast_mut::<PumpFunTradeEvent>() {
-        if is_dev_address_in_signature(&signature, &trade_info.user)
-            || is_dev_address_in_signature(&signature, &trade_info.creator)
-        {
-            trade_info.is_dev_create_token_trade = true;
-        } else if Some(trade_info.user) == bot_wallet {
-            trade_info.is_bot = true;
-        } else {
-            trade_info.is_dev_create_token_trade = false;
+        UnifiedEvent::PumpFunTradeEvent(mut trade_info) => {
+            if is_dev_address_in_signature(&signature, &trade_info.user)
+                || is_dev_address_in_signature(&signature, &trade_info.creator)
+            {
+                trade_info.is_dev_create_token_trade = true;
+            } else if Some(trade_info.user) == bot_wallet {
+                trade_info.is_bot = true;
+            } else {
+                trade_info.is_dev_create_token_trade = false;
+            }
+            if trade_info.metadata.swap_data.is_some() {
+                trade_info.metadata.swap_data.as_mut().unwrap().from_amount =
+                    if trade_info.is_buy { trade_info.sol_amount } else { trade_info.token_amount };
+                trade_info.metadata.swap_data.as_mut().unwrap().to_amount =
+                    if trade_info.is_buy { trade_info.token_amount } else { trade_info.sol_amount };
+            }
+            UnifiedEvent::PumpFunTradeEvent(trade_info)
         }
-        if trade_info.metadata.swap_data.is_some() {
-            trade_info.metadata.swap_data.as_mut().unwrap().from_amount =
-                if trade_info.is_buy { trade_info.sol_amount } else { trade_info.token_amount };
-            trade_info.metadata.swap_data.as_mut().unwrap().to_amount =
-                if trade_info.is_buy { trade_info.token_amount } else { trade_info.sol_amount };
+        UnifiedEvent::PumpSwapBuyEvent(mut trade_info) => {
+            if trade_info.metadata.swap_data.is_some() {
+                trade_info.metadata.swap_data.as_mut().unwrap().from_amount =
+                    trade_info.user_quote_amount_in;
+                trade_info.metadata.swap_data.as_mut().unwrap().to_amount =
+                    trade_info.base_amount_out;
+            }
+            UnifiedEvent::PumpSwapBuyEvent(trade_info)
         }
-    } else if let Some(trade_info) = event.as_any_mut().downcast_mut::<PumpSwapBuyEvent>() {
-        if trade_info.metadata.swap_data.is_some() {
-            trade_info.metadata.swap_data.as_mut().unwrap().from_amount =
-                trade_info.user_quote_amount_in;
-            trade_info.metadata.swap_data.as_mut().unwrap().to_amount = trade_info.base_amount_out;
+        UnifiedEvent::PumpSwapSellEvent(mut trade_info) => {
+            if trade_info.metadata.swap_data.is_some() {
+                trade_info.metadata.swap_data.as_mut().unwrap().from_amount =
+                    trade_info.base_amount_in;
+                trade_info.metadata.swap_data.as_mut().unwrap().to_amount =
+                    trade_info.user_quote_amount_out;
+            }
+            UnifiedEvent::PumpSwapSellEvent(trade_info)
         }
-    } else if let Some(trade_info) = event.as_any_mut().downcast_mut::<PumpSwapSellEvent>() {
-        if trade_info.metadata.swap_data.is_some() {
-            trade_info.metadata.swap_data.as_mut().unwrap().from_amount = trade_info.base_amount_in;
-            trade_info.metadata.swap_data.as_mut().unwrap().to_amount =
-                trade_info.user_quote_amount_out;
+        UnifiedEvent::BonkPoolCreateEvent(pool_info) => {
+            add_bonk_dev_address(&signature, pool_info.creator);
+            UnifiedEvent::BonkPoolCreateEvent(pool_info)
         }
-    } else if let Some(pool_info) = event.as_any().downcast_ref::<BonkPoolCreateEvent>() {
-        add_bonk_dev_address(&signature, pool_info.creator);
-    } else if let Some(trade_info) = event.as_any_mut().downcast_mut::<BonkTradeEvent>() {
-        if is_bonk_dev_address_in_signature(&signature, &trade_info.payer) {
-            trade_info.is_dev_create_token_trade = true;
-        } else if Some(trade_info.payer) == bot_wallet {
-            trade_info.is_bot = true;
-        } else {
-            trade_info.is_dev_create_token_trade = false;
+        UnifiedEvent::BonkTradeEvent(mut trade_info) => {
+            if is_bonk_dev_address_in_signature(&signature, &trade_info.payer) {
+                trade_info.is_dev_create_token_trade = true;
+            } else if Some(trade_info.payer) == bot_wallet {
+                trade_info.is_bot = true;
+            } else {
+                trade_info.is_dev_create_token_trade = false;
+            }
+            UnifiedEvent::BonkTradeEvent(trade_info)
         }
+        _ => event,
     }
-    event
 }

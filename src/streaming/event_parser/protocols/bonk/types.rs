@@ -132,15 +132,12 @@ pub fn pool_state_decode(data: &[u8]) -> Option<PoolState> {
     borsh::from_slice::<PoolState>(&data[..POOL_STATE_SIZE]).ok()
 }
 
-pub fn pool_state_parser(
-    account: &AccountPretty,
-    metadata: EventMetadata,
-) -> Option<Box<dyn UnifiedEvent>> {
+pub fn pool_state_parser(account: &AccountPretty, metadata: EventMetadata) -> Option<UnifiedEvent> {
     if account.data.len() < POOL_STATE_SIZE + 8 {
         return None;
     }
     if let Some(pool_state) = pool_state_decode(&account.data[8..POOL_STATE_SIZE + 8]) {
-        Some(Box::new(BonkPoolStateAccountEvent {
+        Some(UnifiedEvent::BonkPoolStateAccountEvent(BonkPoolStateAccountEvent {
             metadata,
             pubkey: account.pubkey,
             executable: account.executable,
@@ -186,12 +183,12 @@ pub fn global_config_decode(data: &[u8]) -> Option<GlobalConfig> {
 pub fn global_config_parser(
     account: &AccountPretty,
     metadata: EventMetadata,
-) -> Option<Box<dyn UnifiedEvent>> {
+) -> Option<UnifiedEvent> {
     if account.data.len() < GLOBAL_CONFIG_SIZE + 8 {
         return None;
     }
     if let Some(global_config) = global_config_decode(&account.data[8..GLOBAL_CONFIG_SIZE + 8]) {
-        Some(Box::new(BonkGlobalConfigAccountEvent {
+        Some(UnifiedEvent::BonkGlobalConfigAccountEvent(BonkGlobalConfigAccountEvent {
             metadata,
             pubkey: account.pubkey,
             executable: account.executable,
@@ -232,14 +229,14 @@ pub fn platform_config_decode(data: &[u8]) -> Option<PlatformConfig> {
 pub fn platform_config_parser(
     account: &AccountPretty,
     metadata: EventMetadata,
-) -> Option<Box<dyn UnifiedEvent>> {
+) -> Option<UnifiedEvent> {
     if account.data.len() < PLATFORM_CONFIG_SIZE + 8 {
         return None;
     }
     if let Some(platform_config) =
         platform_config_decode(&account.data[8..PLATFORM_CONFIG_SIZE + 8])
     {
-        Some(Box::new(BonkPlatformConfigAccountEvent {
+        Some(UnifiedEvent::BonkPlatformConfigAccountEvent(BonkPlatformConfigAccountEvent {
             metadata,
             pubkey: account.pubkey,
             executable: account.executable,

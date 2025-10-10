@@ -36,15 +36,12 @@ pub fn amm_config_decode(data: &[u8]) -> Option<AmmConfig> {
     borsh::from_slice::<AmmConfig>(&data[..AMM_CONFIG_SIZE]).ok()
 }
 
-pub fn amm_config_parser(
-    account: &AccountPretty,
-    metadata: EventMetadata,
-) -> Option<Box<dyn UnifiedEvent>> {
+pub fn amm_config_parser(account: &AccountPretty, metadata: EventMetadata) -> Option<UnifiedEvent> {
     if account.data.len() < AMM_CONFIG_SIZE + 8 {
         return None;
     }
     if let Some(amm_config) = amm_config_decode(&account.data[8..AMM_CONFIG_SIZE + 8]) {
-        Some(Box::new(RaydiumCpmmAmmConfigAccountEvent {
+        Some(UnifiedEvent::RaydiumCpmmAmmConfigAccountEvent(RaydiumCpmmAmmConfigAccountEvent {
             metadata,
             pubkey: account.pubkey,
             executable: account.executable,
@@ -94,15 +91,12 @@ pub fn pool_state_decode(data: &[u8]) -> Option<PoolState> {
     borsh::from_slice::<PoolState>(&data[..POOL_STATE_SIZE]).ok()
 }
 
-pub fn pool_state_parser(
-    account: &AccountPretty,
-    metadata: EventMetadata,
-) -> Option<Box<dyn UnifiedEvent>> {
+pub fn pool_state_parser(account: &AccountPretty, metadata: EventMetadata) -> Option<UnifiedEvent> {
     if account.data.len() < POOL_STATE_SIZE + 8 {
         return None;
     }
     if let Some(pool_state) = pool_state_decode(&account.data[8..POOL_STATE_SIZE + 8]) {
-        Some(Box::new(RaydiumCpmmPoolStateAccountEvent {
+        Some(UnifiedEvent::RaydiumCpmmPoolStateAccountEvent(RaydiumCpmmPoolStateAccountEvent {
             metadata,
             pubkey: account.pubkey,
             executable: account.executable,

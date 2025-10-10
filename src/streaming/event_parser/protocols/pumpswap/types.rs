@@ -5,9 +5,7 @@ use solana_sdk::pubkey::Pubkey;
 use crate::streaming::{
     event_parser::{
         common::EventMetadata,
-        protocols::pumpswap::{
-            PumpSwapGlobalConfigAccountEvent, PumpSwapPoolAccountEvent,
-        },
+        protocols::pumpswap::{PumpSwapGlobalConfigAccountEvent, PumpSwapPoolAccountEvent},
         UnifiedEvent,
     },
     grpc::AccountPretty,
@@ -36,12 +34,12 @@ pub fn global_config_decode(data: &[u8]) -> Option<GlobalConfig> {
 pub fn global_config_parser(
     account: &AccountPretty,
     metadata: EventMetadata,
-) -> Option<Box<dyn UnifiedEvent>> {
+) -> Option<UnifiedEvent> {
     if account.data.len() < GLOBAL_CONFIG_SIZE + 8 {
         return None;
     }
     if let Some(config) = global_config_decode(&account.data[8..GLOBAL_CONFIG_SIZE + 8]) {
-        Some(Box::new(PumpSwapGlobalConfigAccountEvent {
+        Some(UnifiedEvent::PumpSwapGlobalConfigAccountEvent(PumpSwapGlobalConfigAccountEvent {
             metadata,
             pubkey: account.pubkey,
             executable: account.executable,
@@ -78,15 +76,12 @@ pub fn pool_decode(data: &[u8]) -> Option<Pool> {
     borsh::from_slice::<Pool>(&data[..POOL_SIZE]).ok()
 }
 
-pub fn pool_parser(
-    account: &AccountPretty,
-    metadata: EventMetadata,
-) -> Option<Box<dyn UnifiedEvent>> {
+pub fn pool_parser(account: &AccountPretty, metadata: EventMetadata) -> Option<UnifiedEvent> {
     if account.data.len() < POOL_SIZE + 8 {
         return None;
     }
     if let Some(pool) = pool_decode(&account.data[8..POOL_SIZE + 8]) {
-        Some(Box::new(PumpSwapPoolAccountEvent {
+        Some(UnifiedEvent::PumpSwapPoolAccountEvent(PumpSwapPoolAccountEvent {
             metadata,
             pubkey: account.pubkey,
             executable: account.executable,

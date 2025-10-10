@@ -1,15 +1,11 @@
-use solana_streamer_sdk::{
-    match_event,
-    streaming::{
-        event_parser::{
-            common::{filter::EventTypeFilter, EventType},
-            core::account_event_parser::TokenInfoEvent,
-            UnifiedEvent,
-        },
-        grpc::ClientConfig,
-        yellowstone_grpc::{AccountFilter, TransactionFilter},
-        YellowstoneGrpc,
+use solana_streamer_sdk::streaming::{
+    event_parser::{
+        common::{filter::EventTypeFilter, EventType},
+        UnifiedEvent,
     },
+    grpc::ClientConfig,
+    yellowstone_grpc::{AccountFilter, TransactionFilter},
+    YellowstoneGrpc,
 };
 
 #[tokio::main]
@@ -80,12 +76,11 @@ async fn test_grpc() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn create_event_callback() -> impl Fn(Box<dyn UnifiedEvent>) {
-    |event: Box<dyn UnifiedEvent>| {
-        match_event!(event, {
-            TokenInfoEvent => |e: TokenInfoEvent| {
-                println!("TokenInfoEvent: {:?}", e.decimals);
-            },
-        });
+fn create_event_callback() -> impl Fn(UnifiedEvent) {
+    |event: UnifiedEvent| match event {
+        UnifiedEvent::TokenInfoEvent(e) => {
+            println!("TokenInfoEvent: {:?}", e.decimals);
+        }
+        _ => {}
     }
 }

@@ -1,4 +1,3 @@
-use crate::impl_unified_event;
 use crate::streaming::common::SimdUtils;
 use crate::streaming::event_parser::common::filter::EventTypeFilter;
 use crate::streaming::event_parser::common::high_performance_clock::elapsed_micros_since;
@@ -46,7 +45,6 @@ pub struct TokenAccountEvent {
     pub amount: Option<u64>,
     pub token_owner: Pubkey,
 }
-impl_unified_event!(TokenAccountEvent,);
 
 /// Nonce account event
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,7 +58,6 @@ pub struct NonceAccountEvent {
     pub nonce: String,
     pub authority: String,
 }
-impl_unified_event!(NonceAccountEvent,);
 
 /// Nonce account event
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,11 +71,10 @@ pub struct TokenInfoEvent {
     pub supply: u64,
     pub decimals: u8,
 }
-impl_unified_event!(TokenInfoEvent,);
 
 /// 账户事件解析器
 pub type AccountEventParserFn =
-    fn(account: &AccountPretty, metadata: EventMetadata) -> Option<Box<dyn UnifiedEvent>>;
+    fn(account: &AccountPretty, metadata: EventMetadata) -> Option<UnifiedEvent>;
 
 static PROTOCOL_CONFIGS_CACHE: OnceLock<HashMap<Protocol, Vec<AccountEventParseConfig>>> =
     OnceLock::new();
@@ -256,7 +252,7 @@ impl AccountEventParser {
         protocols: &[Protocol],
         account: AccountPretty,
         event_type_filter: Option<&EventTypeFilter>,
-    ) -> Option<Box<dyn UnifiedEvent>> {
+    ) -> Option<UnifiedEvent> {
         let configs = Self::configs(protocols, event_type_filter);
         for config in configs {
             if config.program_id == Pubkey::default()
@@ -275,13 +271,11 @@ impl AccountEventParser {
                         event_type: config.event_type,
                         program_id: config.program_id,
                         recv_us: account.recv_us,
+                        handle_us: elapsed_micros_since(account.recv_us),
                         ..Default::default()
                     },
                 );
-                if let Some(mut event) = event {
-                    event.set_handle_us(elapsed_micros_since(account.recv_us));
-                    return Some(event);
-                }
+                return event;
             }
         }
         None
@@ -290,7 +284,7 @@ impl AccountEventParser {
     pub fn parse_token_account_event(
         account: &AccountPretty,
         metadata: EventMetadata,
-    ) -> Option<Box<dyn UnifiedEvent>> {
+    ) -> Option<UnifiedEvent> {
         let pubkey = account.pubkey;
         let executable = account.executable;
         let lamports = account.lamports;
@@ -310,8 +304,8 @@ impl AccountEventParser {
                     decimals: mint.decimals,
                 };
                 let recv_delta = elapsed_micros_since(account.recv_us);
-                event.set_handle_us(recv_delta);
-                return Some(Box::new(event));
+                event.metadata.handle_us = recv_delta;
+                return Some(UnifiedEvent::TokenInfoEvent(event));
             }
         }
         // Spl Token2022 Mint
@@ -328,8 +322,8 @@ impl AccountEventParser {
                     decimals: mint.base.decimals,
                 };
                 let recv_delta = elapsed_micros_since(account.recv_us);
-                event.set_handle_us(recv_delta);
-                return Some(Box::new(event));
+                event.metadata.handle_us = recv_delta;
+                return Some(UnifiedEvent::TokenInfoEvent(event));
             }
         }
         let amount = if account.owner.to_bytes() == spl_token_2022::ID.to_bytes() {
@@ -351,14 +345,14 @@ impl AccountEventParser {
             token_owner: account.owner,
         };
         let recv_delta = elapsed_micros_since(account.recv_us);
-        event.set_handle_us(recv_delta);
-        Some(Box::new(event))
+        event.metadata.handle_us = recv_delta;
+        Some(UnifiedEvent::TokenAccountEvent(event))
     }
 
     pub fn parse_nonce_account_event(
         account: &AccountPretty,
         metadata: EventMetadata,
-    ) -> Option<Box<dyn UnifiedEvent>> {
+    ) -> Option<UnifiedEvent> {
         if let Ok(info) = parse_nonce(&account.data) {
             match info {
                 solana_account_decoder::parse_nonce::UiNonceState::Initialized(details) => {
@@ -372,8 +366,8 @@ impl AccountEventParser {
                         nonce: details.blockhash,
                         authority: details.authority,
                     };
-                    event.set_handle_us(elapsed_micros_since(account.recv_us));
-                    return Some(Box::new(event));
+                    event.metadata.handle_us = elapsed_micros_since(account.recv_us);
+                    return Some(UnifiedEvent::NonceAccountEvent(event));
                 }
                 solana_account_decoder::parse_nonce::UiNonceState::Uninitialized => {}
             }

@@ -9,6 +9,7 @@ use crate::streaming::common::{EventProcessor, SubscriptionHandle};
 use crate::streaming::event_parser::common::filter::EventTypeFilter;
 use crate::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
 use crate::streaming::event_parser::{Protocol, UnifiedEvent};
+use crate::streaming::grpc::MetricsManager;
 use crate::streaming::shred::pool::factory;
 use log::error;
 use solana_entry::entry::Entry;
@@ -25,7 +26,7 @@ impl ShredStreamGrpc {
         callback: F,
     ) -> AnyResult<()>
     where
-        F: Fn(Box<dyn UnifiedEvent>) + Send + Sync + 'static,
+        F: Fn(UnifiedEvent) + Send + Sync + 'static,
     {
         // 如果已有活跃订阅，先停止它
         self.stop().await;
@@ -33,17 +34,15 @@ impl ShredStreamGrpc {
         let mut metrics_handle = None;
         // 启动自动性能监控（如果启用）
         if self.config.enable_metrics {
-            metrics_handle = self.metrics_manager.start_auto_monitoring().await;
+            metrics_handle = MetricsManager::global().start_auto_monitoring().await;
         }
 
         // 创建事件处理器
-        let mut event_processor =
-            EventProcessor::new(self.metrics_manager.clone(), self.config.clone());
+        let mut event_processor = EventProcessor::new(self.config.clone());
         event_processor.set_protocols_and_event_type_filter(
             super::common::EventSource::Shred,
             protocols,
             event_type_filter,
-            self.config.backpressure.clone(),
             Some(Arc::new(callback)),
         );
 
@@ -67,7 +66,7 @@ impl ShredStreamGrpc {
                                         );
                                     // 直接处理，背压控制在 EventProcessor 内部处理
                                     if let Err(e) = event_processor_clone
-                                        .process_shred_transaction_with_metrics(
+                                        .process_shred_transaction(
                                             transaction_with_slot,
                                             bot_wallet,
                                         )

@@ -76,8 +76,8 @@ async fn test_grpc() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn create_event_callback() -> impl Fn(Box<dyn UnifiedEvent>) {
-    |event: Box<dyn UnifiedEvent>| {
+fn create_event_callback() -> impl Fn(UnifiedEvent) {
+    |event: UnifiedEvent| {
         println!("🎉 Event received! {:?}", event);
     }
 }

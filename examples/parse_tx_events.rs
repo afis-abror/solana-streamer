@@ -101,7 +101,7 @@ async fn get_single_transaction_details(signature_str: &str) -> Result<()> {
                 .parse_encoded_confirmed_transaction_with_status_meta(
                     signature,
                     transaction,
-                    Arc::new(move |event: &Box<dyn UnifiedEvent>| {
+                    Arc::new(move |event: &UnifiedEvent| {
                         println!("{:?}\n", event);
                     }),
                 )
