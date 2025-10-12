@@ -35,12 +35,3 @@ impl Default for StreamClientConfig {
         Self { connection: ConnectionConfig::default(), enable_metrics: false }
     }
 }
-
-impl StreamClientConfig {
-    pub fn low_latency() -> Self {
-        Self::default()
-    }
-    pub fn high_throughput() -> Self {
-        Self::default()
-    }
-}

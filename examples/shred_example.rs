@@ -15,7 +15,7 @@ async fn test_shreds() -> Result<(), Box<dyn std::error::Error>> {
     println!("Subscribing to ShredStream events...");
 
     // Create low-latency configuration
-    let mut config = StreamClientConfig::low_latency();
+    let mut config = StreamClientConfig::default();
     // Enable performance monitoring, has performance overhead, disabled by default
     config.enable_metrics = true;
     let shred_stream =

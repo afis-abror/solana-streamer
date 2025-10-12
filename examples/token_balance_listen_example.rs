@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn test_grpc() -> Result<(), Box<dyn std::error::Error>> {
     println!("Subscribing to Yellowstone gRPC events...");
     // Create low-latency configuration
-    let mut config: ClientConfig = ClientConfig::low_latency();
+    let mut config: ClientConfig = ClientConfig::default();
     // Enable performance monitoring, has performance overhead, disabled by default
     config.enable_metrics = true;
     let grpc = YellowstoneGrpc::new_with_config(
