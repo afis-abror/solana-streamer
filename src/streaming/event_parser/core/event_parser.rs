@@ -224,7 +224,8 @@ impl EventParser {
         let adapter_callback = Arc::new(move |event: &DexEvent| {
             callback(event.clone());
         });
-        Self::parse_versioned_transaction(
+        let accounts = versioned_tx.message.static_account_keys();
+        Self::parse_instruction_events_from_versioned_transaction(
             protocols,
             event_type_filter,
             &versioned_tx,
@@ -232,45 +233,13 @@ impl EventParser {
             slot,
             block_time,
             recv_us,
+            accounts,
+            inner_instructions,
             bot_wallet,
             transaction_index,
-            inner_instructions,
             adapter_callback,
         )
-        .await?;
-        Ok(())
-    }
-
-    async fn parse_versioned_transaction(
-        protocols: &[Protocol],
-        event_type_filter: Option<&EventTypeFilter>,
-        versioned_tx: &VersionedTransaction,
-        signature: Signature,
-        slot: Option<u64>,
-        block_time: Option<Timestamp>,
-        recv_us: i64,
-        bot_wallet: Option<Pubkey>,
-        transaction_index: Option<u64>,
-        inner_instructions: &[InnerInstructions],
-        callback: Arc<dyn for<'a> Fn(&'a DexEvent) + Send + Sync>,
-    ) -> anyhow::Result<()> {
-        let accounts: Vec<Pubkey> = versioned_tx.message.static_account_keys().to_vec();
-        Self::parse_instruction_events_from_versioned_transaction(
-            protocols,
-            event_type_filter,
-            versioned_tx,
-            signature,
-            slot,
-            block_time,
-            recv_us,
-            &accounts,
-            inner_instructions,
-            bot_wallet,
-            transaction_index,
-            callback,
-        )
-        .await?;
-        Ok(())
+        .await
     }
 
     pub async fn parse_grpc_transaction_owned(
@@ -351,9 +320,6 @@ impl EventParser {
                         }
                     })
                     .collect();
-                // 使用 Arc 包装共享数据，避免不必要的克隆
-                let accounts_arc = Arc::new(accounts);
-                let inner_instructions_arc = Arc::new(inner_instructions);
                 // 解析指令事件
                 let instructions = &message.instructions;
                 Self::parse_instruction_events_from_grpc_transaction(
@@ -364,8 +330,8 @@ impl EventParser {
                     slot,
                     block_time,
                     recv_us,
-                    &accounts_arc,
-                    &inner_instructions_arc,
+                    &accounts,
+                    &inner_instructions,
                     bot_wallet,
                     transaction_index,
                     callback.clone(),
@@ -462,9 +428,6 @@ impl EventParser {
         );
         accounts.extend_from_slice(versioned_tx.message.static_account_keys());
         accounts.extend(address_table_lookups);
-        // 使用 Arc 包装共享数据，避免不必要的克隆
-        let accounts_arc = Arc::new(accounts);
-        let inner_instructions_arc = Arc::new(inner_instructions);
 
         let slot = transaction.slot;
         let block_time = transaction.block_time.map(|t| Timestamp { seconds: t as i64, nanos: 0 });
@@ -480,15 +443,42 @@ impl EventParser {
             Some(slot),
             block_time,
             recv_us,
-            &accounts_arc,
-            &inner_instructions_arc,
+            &accounts,
+            inner_instructions,
             bot_wallet,
             transaction_index,
             callback.clone(),
         )
-        .await?;
+        .await
+    }
 
-        Ok(())
+    /// Helper function to create EventMetadata from common parameters
+    #[inline]
+    fn create_metadata(
+        config: &GenericEventParseConfig,
+        signature: Signature,
+        slot: u64,
+        block_time: Option<Timestamp>,
+        recv_us: i64,
+        outer_index: i64,
+        inner_index: Option<i64>,
+        transaction_index: Option<u64>,
+    ) -> EventMetadata {
+        let timestamp = block_time.unwrap_or(Timestamp { seconds: 0, nanos: 0 });
+        let block_time_ms = timestamp.seconds * 1000 + (timestamp.nanos as i64) / 1_000_000;
+        EventMetadata::new(
+            signature,
+            slot,
+            timestamp.seconds,
+            block_time_ms,
+            config.protocol_type.clone(),
+            config.event_type.clone(),
+            config.program_id,
+            outer_index,
+            inner_index,
+            recv_us,
+            transaction_index,
+        )
     }
 
     /// 通用的内联指令解析方法
@@ -504,26 +494,19 @@ impl EventParser {
         inner_index: Option<i64>,
         transaction_index: Option<u64>,
     ) -> Option<DexEvent> {
-        if let Some(parser) = config.inner_instruction_parser {
-            let timestamp = block_time.unwrap_or(Timestamp { seconds: 0, nanos: 0 });
-            let block_time_ms = timestamp.seconds * 1000 + (timestamp.nanos as i64) / 1_000_000;
-            let metadata = EventMetadata::new(
+        config.inner_instruction_parser.and_then(|parser| {
+            let metadata = Self::create_metadata(
+                config,
                 signature,
                 slot,
-                timestamp.seconds,
-                block_time_ms,
-                config.protocol_type.clone(),
-                config.event_type.clone(),
-                config.program_id,
+                block_time,
+                recv_us,
                 outer_index,
                 inner_index,
-                recv_us,
                 transaction_index,
             );
             parser(data, metadata)
-        } else {
-            None
-        }
+        })
     }
 
     /// 通用的指令解析方法
@@ -540,26 +523,59 @@ impl EventParser {
         inner_index: Option<i64>,
         transaction_index: Option<u64>,
     ) -> Option<DexEvent> {
-        if let Some(parser) = config.instruction_parser {
-            let timestamp = block_time.unwrap_or(Timestamp { seconds: 0, nanos: 0 });
-            let block_time_ms = timestamp.seconds * 1000 + (timestamp.nanos as i64) / 1_000_000;
-            let metadata = EventMetadata::new(
+        config.instruction_parser.and_then(|parser| {
+            let metadata = Self::create_metadata(
+                config,
                 signature,
                 slot,
-                timestamp.seconds,
-                block_time_ms,
-                config.protocol_type.clone(),
-                config.event_type.clone(),
-                config.program_id,
+                block_time,
+                recv_us,
                 outer_index,
                 inner_index,
-                recv_us,
                 transaction_index,
             );
             parser(data, account_pubkeys, metadata)
-        } else {
-            None
+        })
+    }
+
+    /// 从内联指令中解析事件数据 - 通用实现
+    #[allow(clippy::too_many_arguments)]
+    fn parse_events_from_inner_instruction_data(
+        data: &[u8],
+        signature: Signature,
+        slot: u64,
+        block_time: Option<Timestamp>,
+        recv_us: i64,
+        outer_index: i64,
+        inner_index: Option<i64>,
+        transaction_index: Option<u64>,
+        config: &GenericEventParseConfig,
+    ) -> Vec<DexEvent> {
+        // Use SIMD-optimized data validation with correct discriminator length
+        let discriminator_len = config.inner_instruction_discriminator.len();
+        if !SimdUtils::validate_instruction_data_simd(data, 16, discriminator_len) {
+            return Vec::new();
         }
+
+        // Use SIMD-optimized discriminator matching
+        if !SimdUtils::fast_discriminator_match(data, config.inner_instruction_discriminator) {
+            return Vec::new();
+        }
+
+        let data = &data[16..];
+        Self::parse_inner_instruction_event(
+            config,
+            data,
+            signature,
+            slot,
+            block_time,
+            recv_us,
+            outer_index,
+            inner_index,
+            transaction_index,
+        )
+        .into_iter()
+        .collect()
     }
 
     /// 从内联指令中解析事件数据
@@ -575,29 +591,8 @@ impl EventParser {
         transaction_index: Option<u64>,
         config: &GenericEventParseConfig,
     ) -> Vec<DexEvent> {
-        // Use SIMD-optimized data validation with correct discriminator length
-        let discriminator_len = config.inner_instruction_discriminator.len();
-        if !SimdUtils::validate_instruction_data_simd(
+        Self::parse_events_from_inner_instruction_data(
             &inner_instruction.data,
-            16,
-            discriminator_len,
-        ) {
-            return Vec::new();
-        }
-
-        // Use SIMD-optimized discriminator matching
-        if !SimdUtils::fast_discriminator_match(
-            &inner_instruction.data,
-            config.inner_instruction_discriminator,
-        ) {
-            return Vec::new();
-        }
-
-        let data = &inner_instruction.data[16..];
-        let mut events = Vec::new();
-        if let Some(event) = Self::parse_inner_instruction_event(
-            config,
-            data,
             signature,
             slot,
             block_time,
@@ -605,10 +600,8 @@ impl EventParser {
             outer_index,
             inner_index,
             transaction_index,
-        ) {
-            events.push(event);
-        }
-        events
+            config,
+        )
     }
 
     /// 从内联指令中解析事件数据
@@ -624,29 +617,8 @@ impl EventParser {
         transaction_index: Option<u64>,
         config: &GenericEventParseConfig,
     ) -> Vec<DexEvent> {
-        // Use SIMD-optimized data validation with correct discriminator length
-        let discriminator_len = config.inner_instruction_discriminator.len();
-        if !SimdUtils::validate_instruction_data_simd(
+        Self::parse_events_from_inner_instruction_data(
             &inner_instruction.data,
-            16,
-            discriminator_len,
-        ) {
-            return Vec::new();
-        }
-
-        // Use SIMD-optimized discriminator matching
-        if !SimdUtils::fast_discriminator_match(
-            &inner_instruction.data,
-            config.inner_instruction_discriminator,
-        ) {
-            return Vec::new();
-        }
-
-        let data = &inner_instruction.data[16..];
-        let mut events = Vec::new();
-        if let Some(event) = Self::parse_inner_instruction_event(
-            config,
-            data,
             signature,
             slot,
             block_time,
@@ -654,10 +626,8 @@ impl EventParser {
             outer_index,
             inner_index,
             transaction_index,
-        ) {
-            events.push(event);
-        }
-        events
+            config,
+        )
     }
 
     /// 从指令中解析事件
@@ -736,9 +706,7 @@ impl EventParser {
         for (_disc, config, mut event) in all_results {
             // 阻塞处理：原有的同步逻辑
             let mut inner_instruction_event: Option<DexEvent> = None;
-            if inner_instructions.is_some() {
-                let inner_instructions_ref = inner_instructions.unwrap();
-
+            if let Some(inner_instructions_ref) = inner_instructions {
                 // 并行执行两个任务
                 let (inner_event_result, swap_data_result) = std::thread::scope(|s| {
                     let inner_event_handle = s.spawn(|| {
@@ -762,7 +730,7 @@ impl EventParser {
                     });
 
                     let swap_data_handle = s.spawn(|| {
-                        if !event.metadata().swap_data.is_some() {
+                        if event.metadata().swap_data.is_none() {
                             parse_swap_data_from_next_instructions(
                                 &event,
                                 inner_instructions_ref,
@@ -878,9 +846,7 @@ impl EventParser {
         for (_disc, config, mut event) in all_results {
             // 阻塞处理：原有的同步逻辑
             let mut inner_instruction_event: Option<DexEvent> = None;
-            if inner_instructions.is_some() {
-                let inner_instructions_ref = inner_instructions.unwrap();
-
+            if let Some(inner_instructions_ref) = inner_instructions {
                 // 并行执行两个任务
                 let (inner_event_result, swap_data_result) = std::thread::scope(|s| {
                     let inner_event_handle = s.spawn(|| {
@@ -904,7 +870,7 @@ impl EventParser {
                     });
 
                     let swap_data_handle = s.spawn(|| {
-                        if !event.metadata().swap_data.is_some() {
+                        if event.metadata().swap_data.is_none() {
                             parse_swap_data_from_next_grpc_instructions(
                                 &event,
                                 inner_instructions_ref,
@@ -963,24 +929,18 @@ impl EventParser {
                 DexEvent::PumpFunCreateTokenEvent(token_info)
             }
             DexEvent::PumpFunTradeEvent(mut trade_info) => {
-                if is_dev_address_in_signature(&signature, &trade_info.user)
-                    || is_dev_address_in_signature(&signature, &trade_info.creator)
-                {
-                    trade_info.is_dev_create_token_trade = true;
-                } else if Some(trade_info.user) == bot_wallet {
-                    trade_info.is_bot = true;
-                } else {
-                    trade_info.is_dev_create_token_trade = false;
-                }
-                if trade_info.metadata.swap_data.is_some() {
-                    trade_info.metadata.swap_data.as_mut().unwrap().from_amount =
-                        if trade_info.is_buy {
-                            trade_info.sol_amount
-                        } else {
-                            trade_info.token_amount
-                        };
-                    trade_info.metadata.swap_data.as_mut().unwrap().to_amount = if trade_info.is_buy
-                    {
+                trade_info.is_dev_create_token_trade =
+                    is_dev_address_in_signature(&signature, &trade_info.user)
+                    || is_dev_address_in_signature(&signature, &trade_info.creator);
+                trade_info.is_bot = Some(trade_info.user) == bot_wallet;
+
+                if let Some(swap_data) = trade_info.metadata.swap_data.as_mut() {
+                    swap_data.from_amount = if trade_info.is_buy {
+                        trade_info.sol_amount
+                    } else {
+                        trade_info.token_amount
+                    };
+                    swap_data.to_amount = if trade_info.is_buy {
                         trade_info.token_amount
                     } else {
                         trade_info.sol_amount
@@ -989,20 +949,16 @@ impl EventParser {
                 DexEvent::PumpFunTradeEvent(trade_info)
             }
             DexEvent::PumpSwapBuyEvent(mut trade_info) => {
-                if trade_info.metadata.swap_data.is_some() {
-                    trade_info.metadata.swap_data.as_mut().unwrap().from_amount =
-                        trade_info.user_quote_amount_in;
-                    trade_info.metadata.swap_data.as_mut().unwrap().to_amount =
-                        trade_info.base_amount_out;
+                if let Some(swap_data) = trade_info.metadata.swap_data.as_mut() {
+                    swap_data.from_amount = trade_info.user_quote_amount_in;
+                    swap_data.to_amount = trade_info.base_amount_out;
                 }
                 DexEvent::PumpSwapBuyEvent(trade_info)
             }
             DexEvent::PumpSwapSellEvent(mut trade_info) => {
-                if trade_info.metadata.swap_data.is_some() {
-                    trade_info.metadata.swap_data.as_mut().unwrap().from_amount =
-                        trade_info.base_amount_in;
-                    trade_info.metadata.swap_data.as_mut().unwrap().to_amount =
-                        trade_info.user_quote_amount_out;
+                if let Some(swap_data) = trade_info.metadata.swap_data.as_mut() {
+                    swap_data.from_amount = trade_info.base_amount_in;
+                    swap_data.to_amount = trade_info.user_quote_amount_out;
                 }
                 DexEvent::PumpSwapSellEvent(trade_info)
             }
@@ -1011,13 +967,9 @@ impl EventParser {
                 DexEvent::BonkPoolCreateEvent(pool_info)
             }
             DexEvent::BonkTradeEvent(mut trade_info) => {
-                if is_bonk_dev_address_in_signature(&signature, &trade_info.payer) {
-                    trade_info.is_dev_create_token_trade = true;
-                } else if Some(trade_info.payer) == bot_wallet {
-                    trade_info.is_bot = true;
-                } else {
-                    trade_info.is_dev_create_token_trade = false;
-                }
+                trade_info.is_dev_create_token_trade =
+                    is_bonk_dev_address_in_signature(&signature, &trade_info.payer);
+                trade_info.is_bot = Some(trade_info.payer) == bot_wallet;
                 DexEvent::BonkTradeEvent(trade_info)
             }
             _ => event,
