@@ -8,7 +8,7 @@ use crate::protos::shredstream::SubscribeEntriesRequest;
 use crate::streaming::common::{process_shred_transaction, SubscriptionHandle};
 use crate::streaming::event_parser::common::filter::EventTypeFilter;
 use crate::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
-use crate::streaming::event_parser::{Protocol, UnifiedEvent};
+use crate::streaming::event_parser::{Protocol, DexEvent};
 use crate::streaming::grpc::MetricsManager;
 use crate::streaming::shred::pool::factory;
 use log::error;
@@ -26,7 +26,7 @@ impl ShredStreamGrpc {
         callback: F,
     ) -> AnyResult<()>
     where
-        F: Fn(UnifiedEvent) + Send + Sync + 'static,
+        F: Fn(DexEvent) + Send + Sync + 'static,
     {
         // 如果已有活跃订阅，先停止它
         self.stop().await;

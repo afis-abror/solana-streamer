@@ -296,7 +296,7 @@ Note: Multiple subscription attempts on the same client return an error.
 
 ### Unified Event Interface
 
-- **UnifiedEvent Trait**: All protocol events implement a common interface
+- **DexEvent Trait**: All protocol events implement a common interface
 - **Protocol Enum**: Easy identification of event sources
 - **Event Factory**: Automatic event parsing and categorization
 

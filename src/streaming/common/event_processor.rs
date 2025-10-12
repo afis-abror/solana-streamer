@@ -4,7 +4,7 @@ use crate::streaming::event_parser::common::filter::EventTypeFilter;
 use crate::streaming::event_parser::core::account_event_parser::AccountEventParser;
 use crate::streaming::event_parser::core::common_event_parser::CommonEventParser;
 use crate::streaming::event_parser::core::event_parser::EventParser;
-use crate::streaming::event_parser::{core::traits::UnifiedEvent, Protocol};
+use crate::streaming::event_parser::{core::traits::DexEvent, Protocol};
 use crate::streaming::grpc::{EventPretty, MetricsManager};
 use crate::streaming::shred::TransactionWithSlot;
 use solana_sdk::pubkey::Pubkey;
@@ -15,9 +15,9 @@ use std::sync::Arc;
 /// 用于 Transaction 事件处理，在调用原始 callback 的同时更新 metrics
 #[inline]
 fn create_metrics_callback(
-    callback: Arc<dyn Fn(UnifiedEvent) + Send + Sync>,
-) -> Arc<dyn Fn(UnifiedEvent) + Send + Sync> {
-    Arc::new(move |event: UnifiedEvent| {
+    callback: Arc<dyn Fn(DexEvent) + Send + Sync>,
+) -> Arc<dyn Fn(DexEvent) + Send + Sync> {
+    Arc::new(move |event: DexEvent| {
         let processing_time_us = event.metadata().handle_us as f64;
         callback(event);
         MetricsManager::global().update_metrics(
@@ -33,7 +33,7 @@ pub async fn process_grpc_transaction(
     event_pretty: EventPretty,
     protocols: &[Protocol],
     event_type_filter: Option<&EventTypeFilter>,
-    callback: Arc<dyn Fn(UnifiedEvent) + Send + Sync>,
+    callback: Arc<dyn Fn(DexEvent) + Send + Sync>,
     bot_wallet: Option<Pubkey>,
 ) -> AnyResult<()> {
     match event_pretty {
@@ -107,7 +107,7 @@ pub async fn process_shred_transaction(
     transaction_with_slot: TransactionWithSlot,
     protocols: &[Protocol],
     event_type_filter: Option<&EventTypeFilter>,
-    callback: Arc<dyn Fn(UnifiedEvent) + Send + Sync>,
+    callback: Arc<dyn Fn(DexEvent) + Send + Sync>,
     bot_wallet: Option<Pubkey>,
 ) -> AnyResult<()> {
     MetricsManager::global().add_tx_process_count();

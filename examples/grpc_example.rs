@@ -7,7 +7,7 @@ use solana_streamer_sdk::streaming::{
             raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID,
             raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID,
         },
-        Protocol, UnifiedEvent,
+        Protocol, DexEvent,
     },
     grpc::ClientConfig,
     yellowstone_grpc::{AccountFilter, TransactionFilter},
@@ -108,15 +108,15 @@ async fn test_grpc() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn create_event_callback() -> impl Fn(UnifiedEvent) {
-    |event: UnifiedEvent| {
+fn create_event_callback() -> impl Fn(DexEvent) {
+    |event: DexEvent| {
         println!(
             "🎉 Event received! Type: {:?}, transaction_index: {:?}",
             event.metadata().event_type,
             event.metadata().transaction_index
         );
         match event {
-            UnifiedEvent::BlockMetaEvent(e) => {
+            DexEvent::BlockMetaEvent(e) => {
                 println!("{:?}", e);
             }
             // .... other events

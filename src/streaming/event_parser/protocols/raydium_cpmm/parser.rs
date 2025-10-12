@@ -7,7 +7,7 @@ use crate::streaming::event_parser::{
         discriminators, RaydiumCpmmDepositEvent, RaydiumCpmmInitializeEvent, RaydiumCpmmSwapEvent,
         RaydiumCpmmWithdrawEvent,
     },
-    UnifiedEvent,
+    DexEvent,
 };
 
 /// Raydium CPMM程序ID
@@ -73,11 +73,11 @@ fn parse_withdraw_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 24 || accounts.len() < 14 {
         return None;
     }
-    Some(UnifiedEvent::RaydiumCpmmWithdrawEvent(RaydiumCpmmWithdrawEvent {
+    Some(DexEvent::RaydiumCpmmWithdrawEvent(RaydiumCpmmWithdrawEvent {
         metadata,
         lp_token_amount: read_u64_le(data, 0)?,
         minimum_token0_amount: read_u64_le(data, 8)?,
@@ -104,11 +104,11 @@ fn parse_initialize_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 24 || accounts.len() < 20 {
         return None;
     }
-    Some(UnifiedEvent::RaydiumCpmmInitializeEvent(RaydiumCpmmInitializeEvent {
+    Some(DexEvent::RaydiumCpmmInitializeEvent(RaydiumCpmmInitializeEvent {
         metadata,
         init_amount0: read_u64_le(data, 0)?,
         init_amount1: read_u64_le(data, 8)?,
@@ -141,11 +141,11 @@ fn parse_deposit_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 24 || accounts.len() < 13 {
         return None;
     }
-    Some(UnifiedEvent::RaydiumCpmmDepositEvent(RaydiumCpmmDepositEvent {
+    Some(DexEvent::RaydiumCpmmDepositEvent(RaydiumCpmmDepositEvent {
         metadata,
         lp_token_amount: read_u64_le(data, 0)?,
         maximum_token0_amount: read_u64_le(data, 8)?,
@@ -171,7 +171,7 @@ fn parse_swap_base_input_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 16 || accounts.len() < 13 {
         return None;
     }
@@ -179,7 +179,7 @@ fn parse_swap_base_input_instruction(
     let amount_in = read_u64_le(data, 0)?;
     let minimum_amount_out = read_u64_le(data, 8)?;
 
-    Some(UnifiedEvent::RaydiumCpmmSwapEvent(RaydiumCpmmSwapEvent {
+    Some(DexEvent::RaydiumCpmmSwapEvent(RaydiumCpmmSwapEvent {
         metadata,
         amount_in,
         minimum_amount_out,
@@ -204,7 +204,7 @@ fn parse_swap_base_output_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 16 || accounts.len() < 13 {
         return None;
     }
@@ -212,7 +212,7 @@ fn parse_swap_base_output_instruction(
     let max_amount_in = read_u64_le(data, 0)?;
     let amount_out = read_u64_le(data, 8)?;
 
-    Some(UnifiedEvent::RaydiumCpmmSwapEvent(RaydiumCpmmSwapEvent {
+    Some(DexEvent::RaydiumCpmmSwapEvent(RaydiumCpmmSwapEvent {
         metadata,
         max_amount_in,
         amount_out,

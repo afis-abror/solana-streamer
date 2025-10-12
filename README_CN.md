@@ -295,7 +295,7 @@ grpc.update_subscription(
 
 ### 统一事件接口
 
-- **UnifiedEvent Trait**: 所有协议事件实现通用接口
+- **DexEvent Trait**: 所有协议事件实现通用接口
 - **Protocol Enum**: 轻松识别事件来源
 - **Event Factory**: 自动事件解析和分类
 

@@ -80,28 +80,6 @@ pub fn bonk_trade_event_log_decode(data: &[u8]) -> Option<BonkTradeEvent> {
     borsh::from_slice::<BonkTradeEvent>(&data[..BONK_TRADE_EVENT_LOG_SIZE]).ok()
 }
 
-// Macro to generate UnifiedEvent implementation, specifying the fields to be merged
-// impl_unified_event!(
-//     BonkTradeEvent,
-//     pool_state,
-//     total_base_sell,
-//     virtual_base,
-//     virtual_quote,
-//     real_base_before,
-//     real_quote_before,
-//     real_base_after,
-//     real_quote_after,
-//     amount_in,
-//     amount_out,
-//     protocol_fee,
-//     platform_fee,
-//     creator_fee,
-//     share_fee,
-//     trade_direction,
-//     pool_status,
-//     exact_in
-// );
-
 /// Create pool event
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]
 pub struct BonkPoolCreateEvent {
@@ -138,18 +116,6 @@ pub fn bonk_pool_create_event_log_decode(data: &[u8]) -> Option<BonkPoolCreateEv
     }
     borsh::from_slice::<BonkPoolCreateEvent>(&data[..BONK_POOL_CREATE_EVENT_LOG_SIZE]).ok()
 }
-
-// Macro to generate UnifiedEvent implementation, specifying the fields to be merged
-// impl_unified_event!(
-//     BonkPoolCreateEvent,
-//     pool_state,
-//     creator,
-//     config,
-//     base_mint_param,
-//     curve_param,
-//     vesting_param,
-//     amm_fee_on
-// );
 
 /// Create pool event
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]
@@ -224,14 +190,6 @@ pub struct BonkMigrateToAmmEvent {
     #[borsh(skip)]
     pub rent_program: Pubkey,
 }
-
-// Macro to generate UnifiedEvent implementation, specifying the fields to be merged
-// impl_unified_event!(
-//     BonkMigrateToAmmEvent,
-//     base_lot_size,
-//     quote_lot_size,
-//     market_vault_signer_nonce
-// );
 
 // Migrate to CP Swap event
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]

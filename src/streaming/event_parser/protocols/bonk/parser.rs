@@ -9,7 +9,7 @@ use crate::streaming::event_parser::{
         ConstantCurve, CurveParams, FixedCurve, LinearCurve, MintParams, TradeDirection,
         VestingParams,
     },
-    UnifiedEvent,
+    DexEvent,
 };
 
 /// Bonk Program ID
@@ -113,16 +113,16 @@ pub const CONFIGS: &[GenericEventParseConfig] = &[
 fn parse_pool_create_inner_instruction(
     data: &[u8],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if let Some(event) = bonk_pool_create_event_log_decode(data) {
-        Some(UnifiedEvent::BonkPoolCreateEvent(BonkPoolCreateEvent { metadata, ..event }))
+        Some(DexEvent::BonkPoolCreateEvent(BonkPoolCreateEvent { metadata, ..event }))
     } else {
         None
     }
 }
 
 /// Parse trade event
-fn parse_trade_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<UnifiedEvent> {
+fn parse_trade_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
     if let Some(event) = bonk_trade_event_log_decode(data) {
         if metadata.event_type == EventType::BonkBuyExactIn
             || metadata.event_type == EventType::BonkBuyExactOut
@@ -136,7 +136,7 @@ fn parse_trade_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option
         {
             return None;
         }
-        Some(UnifiedEvent::BonkTradeEvent(BonkTradeEvent { metadata, ..event }))
+        Some(DexEvent::BonkTradeEvent(BonkTradeEvent { metadata, ..event }))
     } else {
         None
     }
@@ -147,7 +147,7 @@ fn parse_buy_exact_in_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 16 || accounts.len() < 18 {
         return None;
     }
@@ -156,7 +156,7 @@ fn parse_buy_exact_in_instruction(
     let minimum_amount_out = read_u64_le(data, 8)?;
     let share_fee_rate = read_u64_le(data, 16)?;
 
-    Some(UnifiedEvent::BonkTradeEvent(BonkTradeEvent {
+    Some(DexEvent::BonkTradeEvent(BonkTradeEvent {
         metadata,
         amount_in,
         minimum_amount_out,
@@ -185,7 +185,7 @@ fn parse_buy_exact_out_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 16 || accounts.len() < 18 {
         return None;
     }
@@ -194,7 +194,7 @@ fn parse_buy_exact_out_instruction(
     let maximum_amount_in = read_u64_le(data, 8)?;
     let share_fee_rate = read_u64_le(data, 16)?;
 
-    Some(UnifiedEvent::BonkTradeEvent(BonkTradeEvent {
+    Some(DexEvent::BonkTradeEvent(BonkTradeEvent {
         metadata,
         amount_out,
         maximum_amount_in,
@@ -223,7 +223,7 @@ fn parse_sell_exact_in_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 16 || accounts.len() < 18 {
         return None;
     }
@@ -232,7 +232,7 @@ fn parse_sell_exact_in_instruction(
     let minimum_amount_out = read_u64_le(data, 8)?;
     let share_fee_rate = read_u64_le(data, 16)?;
 
-    Some(UnifiedEvent::BonkTradeEvent(BonkTradeEvent {
+    Some(DexEvent::BonkTradeEvent(BonkTradeEvent {
         metadata,
         amount_in,
         minimum_amount_out,
@@ -261,7 +261,7 @@ fn parse_sell_exact_out_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 16 || accounts.len() < 18 {
         return None;
     }
@@ -270,7 +270,7 @@ fn parse_sell_exact_out_instruction(
     let maximum_amount_in = read_u64_le(data, 8)?;
     let share_fee_rate = read_u64_le(data, 16)?;
 
-    Some(UnifiedEvent::BonkTradeEvent(BonkTradeEvent {
+    Some(DexEvent::BonkTradeEvent(BonkTradeEvent {
         metadata,
         amount_out,
         maximum_amount_in,
@@ -300,7 +300,7 @@ fn parse_initialize_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 24 {
         return None;
     }
@@ -310,7 +310,7 @@ fn parse_initialize_instruction(
     let curve_param = parse_curve_params(data, &mut offset)?;
     let vesting_param = parse_vesting_params(data, &mut offset)?;
 
-    Some(UnifiedEvent::BonkPoolCreateEvent(BonkPoolCreateEvent {
+    Some(DexEvent::BonkPoolCreateEvent(BonkPoolCreateEvent {
         metadata,
         payer: accounts[0],
         creator: accounts[1],
@@ -333,7 +333,7 @@ fn parse_initialize_v2_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 24 {
         return None;
     }
@@ -344,7 +344,7 @@ fn parse_initialize_v2_instruction(
     let vesting_param = parse_vesting_params(data, &mut offset)?;
     let amm_fee_on = data[offset];
 
-    Some(UnifiedEvent::BonkPoolCreateEvent(BonkPoolCreateEvent {
+    Some(DexEvent::BonkPoolCreateEvent(BonkPoolCreateEvent {
         metadata,
         payer: accounts[0],
         creator: accounts[1],
@@ -372,7 +372,7 @@ fn parse_initialize_with_token_2022_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 24 {
         return None;
     }
@@ -383,7 +383,7 @@ fn parse_initialize_with_token_2022_instruction(
     let vesting_param = parse_vesting_params(data, &mut offset)?;
     let amm_fee_on = data[offset];
 
-    Some(UnifiedEvent::BonkPoolCreateEvent(BonkPoolCreateEvent {
+    Some(DexEvent::BonkPoolCreateEvent(BonkPoolCreateEvent {
         metadata,
         payer: accounts[0],
         creator: accounts[1],
@@ -516,7 +516,7 @@ fn parse_migrate_to_amm_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 16 {
         return None;
     }
@@ -525,7 +525,7 @@ fn parse_migrate_to_amm_instruction(
     let quote_lot_size = u64::from_le_bytes(data[8..16].try_into().unwrap());
     let market_vault_signer_nonce = data[16];
 
-    Some(UnifiedEvent::BonkMigrateToAmmEvent(BonkMigrateToAmmEvent {
+    Some(DexEvent::BonkMigrateToAmmEvent(BonkMigrateToAmmEvent {
         metadata,
         base_lot_size,
         quote_lot_size,
@@ -571,8 +571,8 @@ fn parse_migrate_to_cpswap_instruction(
     _data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
-    Some(UnifiedEvent::BonkMigrateToCpswapEvent(BonkMigrateToCpswapEvent {
+) -> Option<DexEvent> {
+    Some(DexEvent::BonkMigrateToCpswapEvent(BonkMigrateToCpswapEvent {
         metadata,
         payer: accounts[0],
         base_mint: accounts[1],

@@ -4,7 +4,7 @@ use solana_sdk::pubkey::Pubkey;
 use solana_streamer_sdk::streaming::{
     event_parser::{
         common::{filter::EventTypeFilter, EventType},
-        UnifiedEvent,
+        DexEvent,
     },
     grpc::ClientConfig,
     yellowstone_grpc::{AccountFilter, TransactionFilter},
@@ -102,9 +102,9 @@ async fn test_grpc() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn create_event_callback() -> impl Fn(UnifiedEvent) {
-    |event: UnifiedEvent| match event {
-        UnifiedEvent::TokenAccountEvent(e) => {
+fn create_event_callback() -> impl Fn(DexEvent) {
+    |event: DexEvent| match event {
+        DexEvent::TokenAccountEvent(e) => {
             println!("TokenAccount: {:?} amount: {:?}", e.pubkey, e.amount);
         }
         _ => {}

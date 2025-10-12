@@ -1,5 +1,5 @@
 use solana_streamer_sdk::streaming::{
-    event_parser::{Protocol, UnifiedEvent},
+    event_parser::{Protocol, DexEvent},
     shred::StreamClientConfig,
     ShredStreamGrpc,
 };
@@ -54,15 +54,15 @@ async fn test_shreds() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn create_event_callback() -> impl Fn(UnifiedEvent) {
-    |event: UnifiedEvent| {
+fn create_event_callback() -> impl Fn(DexEvent) {
+    |event: DexEvent| {
         println!(
             "🎉 Event received! Type: {:?}, transaction_index: {:?}",
             event.metadata().event_type,
             event.metadata().transaction_index
         );
         match event {
-            UnifiedEvent::BlockMetaEvent(e) => {
+            DexEvent::BlockMetaEvent(e) => {
                 println!("BlockMetaEvent: {:?}", e.metadata.handle_us);
             }
             _ => {}

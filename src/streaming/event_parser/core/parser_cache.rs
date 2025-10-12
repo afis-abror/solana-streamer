@@ -21,7 +21,7 @@ use crate::streaming::{
             raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID,
             raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID,
         },
-        Protocol, UnifiedEvent,
+        Protocol, DexEvent,
     },
     grpc::AccountPretty,
 };
@@ -39,13 +39,13 @@ use std::{
 ///
 /// 用于解析内联指令（Inner Instruction）生成的事件
 pub type InnerInstructionEventParser =
-    fn(data: &[u8], metadata: EventMetadata) -> Option<UnifiedEvent>;
+    fn(data: &[u8], metadata: EventMetadata) -> Option<DexEvent>;
 
 /// 指令事件解析器函数类型
 ///
 /// 用于解析普通指令（Instruction）生成的事件，需要账户信息
 pub type InstructionEventParser =
-    fn(data: &[u8], accounts: &[Pubkey], metadata: EventMetadata) -> Option<UnifiedEvent>;
+    fn(data: &[u8], accounts: &[Pubkey], metadata: EventMetadata) -> Option<DexEvent>;
 
 /// 指令事件解析器配置
 ///
@@ -327,9 +327,6 @@ impl Default for AccountPubkeyCache {
     }
 }
 
-/// 线程局部账户公钥缓存
-///
-/// 每个线程独立维护一个缓存实例，避免锁竞争
 thread_local! {
     static THREAD_LOCAL_ACCOUNT_CACHE: std::cell::RefCell<AccountPubkeyCache> =
         std::cell::RefCell::new(AccountPubkeyCache::new());
@@ -365,7 +362,7 @@ pub fn build_account_pubkeys_with_cache(
 ///
 /// 用于解析账户状态变更生成的事件
 pub type AccountEventParserFn =
-    fn(account: &AccountPretty, metadata: EventMetadata) -> Option<UnifiedEvent>;
+    fn(account: &AccountPretty, metadata: EventMetadata) -> Option<DexEvent>;
 
 /// 账户事件解析器配置
 ///

@@ -10,7 +10,7 @@ use crate::streaming::event_parser::{
         RaydiumClmmOpenPositionV2Event, RaydiumClmmOpenPositionWithToken22NftEvent,
         RaydiumClmmSwapEvent, RaydiumClmmSwapV2Event,
     },
-    UnifiedEvent,
+    DexEvent,
 };
 use solana_sdk::pubkey::Pubkey;
 
@@ -107,11 +107,11 @@ fn parse_open_position_v2_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 51 || accounts.len() < 22 {
         return None;
     }
-    Some(UnifiedEvent::RaydiumClmmOpenPositionV2Event(RaydiumClmmOpenPositionV2Event {
+    Some(DexEvent::RaydiumClmmOpenPositionV2Event(RaydiumClmmOpenPositionV2Event {
         metadata,
         tick_lower_index: read_i32_le(data, 0)?,
         tick_upper_index: read_i32_le(data, 4)?,
@@ -153,11 +153,11 @@ fn parse_open_position_with_token_22_nft_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 51 || accounts.len() < 20 {
         return None;
     }
-    Some(UnifiedEvent::RaydiumClmmOpenPositionWithToken22NftEvent(
+    Some(DexEvent::RaydiumClmmOpenPositionWithToken22NftEvent(
         RaydiumClmmOpenPositionWithToken22NftEvent {
             metadata,
             tick_lower_index: read_i32_le(data, 0)?,
@@ -198,11 +198,11 @@ fn parse_increase_liquidity_v2_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 34 || accounts.len() < 15 {
         return None;
     }
-    Some(UnifiedEvent::RaydiumClmmIncreaseLiquidityV2Event(RaydiumClmmIncreaseLiquidityV2Event {
+    Some(DexEvent::RaydiumClmmIncreaseLiquidityV2Event(RaydiumClmmIncreaseLiquidityV2Event {
         metadata,
         liquidity: read_u128_le(data, 0)?,
         amount0_max: read_u64_le(data, 16)?,
@@ -231,11 +231,11 @@ fn parse_create_pool_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 24 || accounts.len() < 13 {
         return None;
     }
-    Some(UnifiedEvent::RaydiumClmmCreatePoolEvent(RaydiumClmmCreatePoolEvent {
+    Some(DexEvent::RaydiumClmmCreatePoolEvent(RaydiumClmmCreatePoolEvent {
         metadata,
         sqrt_price_x64: read_u128_le(data, 0)?,
         open_time: read_u64_le(data, 16)?,
@@ -260,11 +260,11 @@ fn parse_decrease_liquidity_v2_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 32 || accounts.len() < 16 {
         return None;
     }
-    Some(UnifiedEvent::RaydiumClmmDecreaseLiquidityV2Event(RaydiumClmmDecreaseLiquidityV2Event {
+    Some(DexEvent::RaydiumClmmDecreaseLiquidityV2Event(RaydiumClmmDecreaseLiquidityV2Event {
         metadata,
         liquidity: read_u128_le(data, 0)?,
         amount0_min: read_u64_le(data, 16)?,
@@ -294,11 +294,11 @@ fn parse_close_position_instruction(
     _data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if accounts.len() < 6 {
         return None;
     }
-    Some(UnifiedEvent::RaydiumClmmClosePositionEvent(RaydiumClmmClosePositionEvent {
+    Some(DexEvent::RaydiumClmmClosePositionEvent(RaydiumClmmClosePositionEvent {
         metadata,
         nft_owner: accounts[0],
         position_nft_mint: accounts[1],
@@ -314,7 +314,7 @@ fn parse_swap_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 33 || accounts.len() < 10 {
         return None;
     }
@@ -324,7 +324,7 @@ fn parse_swap_instruction(
     let sqrt_price_limit_x64 = read_u128_le(data, 16)?;
     let is_base_input = read_u8_le(data, 32)?;
 
-    Some(UnifiedEvent::RaydiumClmmSwapEvent(RaydiumClmmSwapEvent {
+    Some(DexEvent::RaydiumClmmSwapEvent(RaydiumClmmSwapEvent {
         metadata,
         amount,
         other_amount_threshold,
@@ -348,7 +348,7 @@ fn parse_swap_v2_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 33 || accounts.len() < 13 {
         return None;
     }
@@ -358,7 +358,7 @@ fn parse_swap_v2_instruction(
     let sqrt_price_limit_x64 = read_u128_le(data, 16)?;
     let is_base_input = read_u8_le(data, 32)?;
 
-    Some(UnifiedEvent::RaydiumClmmSwapV2Event(RaydiumClmmSwapV2Event {
+    Some(DexEvent::RaydiumClmmSwapV2Event(RaydiumClmmSwapV2Event {
         metadata,
         amount,
         other_amount_threshold,

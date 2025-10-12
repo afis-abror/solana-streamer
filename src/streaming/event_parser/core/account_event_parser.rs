@@ -3,7 +3,7 @@ use crate::streaming::event_parser::common::filter::EventTypeFilter;
 use crate::streaming::event_parser::common::high_performance_clock::elapsed_micros_since;
 use crate::streaming::event_parser::common::EventMetadata;
 use crate::streaming::event_parser::core::parser_cache::get_account_configs;
-use crate::streaming::event_parser::core::traits::UnifiedEvent;
+use crate::streaming::event_parser::core::traits::DexEvent;
 use crate::streaming::event_parser::Protocol;
 use crate::streaming::grpc::AccountPretty;
 use serde::{Deserialize, Serialize};
@@ -62,7 +62,7 @@ impl AccountEventParser {
         protocols: &[Protocol],
         account: AccountPretty,
         event_type_filter: Option<&EventTypeFilter>,
-    ) -> Option<UnifiedEvent> {
+    ) -> Option<DexEvent> {
         // 直接从 parser_cache 获取配置
         let configs = get_account_configs(
             protocols,
@@ -102,7 +102,7 @@ impl AccountEventParser {
     pub fn parse_token_account_event(
         account: &AccountPretty,
         metadata: EventMetadata,
-    ) -> Option<UnifiedEvent> {
+    ) -> Option<DexEvent> {
         let pubkey = account.pubkey;
         let executable = account.executable;
         let lamports = account.lamports;
@@ -123,7 +123,7 @@ impl AccountEventParser {
                 };
                 let recv_delta = elapsed_micros_since(account.recv_us);
                 event.metadata.handle_us = recv_delta;
-                return Some(UnifiedEvent::TokenInfoEvent(event));
+                return Some(DexEvent::TokenInfoEvent(event));
             }
         }
         // Spl Token2022 Mint
@@ -141,7 +141,7 @@ impl AccountEventParser {
                 };
                 let recv_delta = elapsed_micros_since(account.recv_us);
                 event.metadata.handle_us = recv_delta;
-                return Some(UnifiedEvent::TokenInfoEvent(event));
+                return Some(DexEvent::TokenInfoEvent(event));
             }
         }
         let amount = if account.owner.to_bytes() == spl_token_2022::ID.to_bytes() {
@@ -164,13 +164,13 @@ impl AccountEventParser {
         };
         let recv_delta = elapsed_micros_since(account.recv_us);
         event.metadata.handle_us = recv_delta;
-        Some(UnifiedEvent::TokenAccountEvent(event))
+        Some(DexEvent::TokenAccountEvent(event))
     }
 
     pub fn parse_nonce_account_event(
         account: &AccountPretty,
         metadata: EventMetadata,
-    ) -> Option<UnifiedEvent> {
+    ) -> Option<DexEvent> {
         if let Ok(info) = parse_nonce(&account.data) {
             match info {
                 solana_account_decoder::parse_nonce::UiNonceState::Initialized(details) => {
@@ -185,7 +185,7 @@ impl AccountEventParser {
                         authority: details.authority,
                     };
                     event.metadata.handle_us = elapsed_micros_since(account.recv_us);
-                    return Some(UnifiedEvent::NonceAccountEvent(event));
+                    return Some(DexEvent::NonceAccountEvent(event));
                 }
                 solana_account_decoder::parse_nonce::UiNonceState::Uninitialized => {}
             }

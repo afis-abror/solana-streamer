@@ -36,19 +36,6 @@ pub fn pumpfun_create_token_event_log_decode(data: &[u8]) -> Option<PumpFunCreat
     borsh::from_slice::<PumpFunCreateTokenEvent>(&data[..PUMPFUN_CREATE_TOKEN_EVENT_LOG_SIZE]).ok()
 }
 
-// impl_unified_event!(
-//     PumpFunCreateTokenEvent,
-//     mint,
-//     bonding_curve,
-//     user,
-//     creator,
-//     timestamp,
-//     virtual_token_reserves,
-//     virtual_sol_reserves,
-//     real_token_reserves,
-//     token_total_supply
-// );
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]
 pub struct PumpFunTradeEvent {
     #[borsh(skip)]
@@ -125,26 +112,6 @@ pub fn pumpfun_trade_event_log_decode(data: &[u8]) -> Option<PumpFunTradeEvent> 
     borsh::from_slice::<PumpFunTradeEvent>(&data[..PUMPFUN_TRADE_EVENT_LOG_SIZE]).ok()
 }
 
-// impl_unified_event!(
-//     PumpFunTradeEvent,
-//     mint,
-//     sol_amount,
-//     token_amount,
-//     is_buy,
-//     user,
-//     timestamp,
-//     virtual_sol_reserves,
-//     virtual_token_reserves,
-//     real_sol_reserves,
-//     real_token_reserves,
-//     fee_recipient,
-//     fee_basis_points,
-//     fee,
-//     creator,
-//     creator_fee_basis_points,
-//     creator_fee
-// );
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]
 pub struct PumpFunMigrateEvent {
     #[borsh(skip)]
@@ -209,18 +176,6 @@ pub fn pumpfun_migrate_event_log_decode(data: &[u8]) -> Option<PumpFunMigrateEve
     }
     borsh::from_slice::<PumpFunMigrateEvent>(&data[..PUMPFUN_MIGRATE_EVENT_LOG_SIZE]).ok()
 }
-
-// impl_unified_event!(
-//     PumpFunMigrateEvent,
-//     user,
-//     mint,
-//     mint_amount,
-//     sol_amount,
-//     pool_migration_fee,
-//     bonding_curve,
-//     timestamp,
-//     pool
-// );
 
 /// 铸币曲线
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, BorshDeserialize)]

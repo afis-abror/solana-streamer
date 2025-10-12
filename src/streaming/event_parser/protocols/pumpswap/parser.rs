@@ -7,7 +7,7 @@ use crate::streaming::event_parser::{
         pump_swap_withdraw_event_log_decode, PumpSwapBuyEvent, PumpSwapCreatePoolEvent,
         PumpSwapDepositEvent, PumpSwapSellEvent, PumpSwapWithdrawEvent,
     },
-    UnifiedEvent,
+    DexEvent,
 };
 use solana_sdk::pubkey::Pubkey;
 
@@ -70,18 +70,18 @@ pub const CONFIGS: &[GenericEventParseConfig] = &[
 ];
 
 /// 解析买入日志事件
-fn parse_buy_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<UnifiedEvent> {
+fn parse_buy_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
     if let Some(event) = pump_swap_buy_event_log_decode(data) {
-        Some(UnifiedEvent::PumpSwapBuyEvent(PumpSwapBuyEvent { metadata, ..event }))
+        Some(DexEvent::PumpSwapBuyEvent(PumpSwapBuyEvent { metadata, ..event }))
     } else {
         None
     }
 }
 
 /// 解析卖出日志事件
-fn parse_sell_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<UnifiedEvent> {
+fn parse_sell_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
     if let Some(event) = pump_swap_sell_event_log_decode(data) {
-        Some(UnifiedEvent::PumpSwapSellEvent(PumpSwapSellEvent { metadata, ..event }))
+        Some(DexEvent::PumpSwapSellEvent(PumpSwapSellEvent { metadata, ..event }))
     } else {
         None
     }
@@ -91,27 +91,27 @@ fn parse_sell_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<
 fn parse_create_pool_inner_instruction(
     data: &[u8],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if let Some(event) = pump_swap_create_pool_event_log_decode(data) {
-        Some(UnifiedEvent::PumpSwapCreatePoolEvent(PumpSwapCreatePoolEvent { metadata, ..event }))
+        Some(DexEvent::PumpSwapCreatePoolEvent(PumpSwapCreatePoolEvent { metadata, ..event }))
     } else {
         None
     }
 }
 
 /// 解析存款日志事件
-fn parse_deposit_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<UnifiedEvent> {
+fn parse_deposit_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
     if let Some(event) = pump_swap_deposit_event_log_decode(data) {
-        Some(UnifiedEvent::PumpSwapDepositEvent(PumpSwapDepositEvent { metadata, ..event }))
+        Some(DexEvent::PumpSwapDepositEvent(PumpSwapDepositEvent { metadata, ..event }))
     } else {
         None
     }
 }
 
 /// 解析提款日志事件
-fn parse_withdraw_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<UnifiedEvent> {
+fn parse_withdraw_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
     if let Some(event) = pump_swap_withdraw_event_log_decode(data) {
-        Some(UnifiedEvent::PumpSwapWithdrawEvent(PumpSwapWithdrawEvent { metadata, ..event }))
+        Some(DexEvent::PumpSwapWithdrawEvent(PumpSwapWithdrawEvent { metadata, ..event }))
     } else {
         None
     }
@@ -122,7 +122,7 @@ fn parse_buy_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 16 || accounts.len() < 11 {
         return None;
     }
@@ -130,7 +130,7 @@ fn parse_buy_instruction(
     let base_amount_out = read_u64_le(data, 0)?;
     let max_quote_amount_in = read_u64_le(data, 8)?;
 
-    Some(UnifiedEvent::PumpSwapBuyEvent(PumpSwapBuyEvent {
+    Some(DexEvent::PumpSwapBuyEvent(PumpSwapBuyEvent {
         metadata,
         base_amount_out,
         max_quote_amount_in,
@@ -157,7 +157,7 @@ fn parse_sell_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 16 || accounts.len() < 11 {
         return None;
     }
@@ -165,7 +165,7 @@ fn parse_sell_instruction(
     let base_amount_in = read_u64_le(data, 0)?;
     let min_quote_amount_out = read_u64_le(data, 8)?;
 
-    Some(UnifiedEvent::PumpSwapSellEvent(PumpSwapSellEvent {
+    Some(DexEvent::PumpSwapSellEvent(PumpSwapSellEvent {
         metadata,
         base_amount_in,
         min_quote_amount_out,
@@ -192,7 +192,7 @@ fn parse_create_pool_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 18 || accounts.len() < 11 {
         return None;
     }
@@ -206,7 +206,7 @@ fn parse_create_pool_instruction(
         Pubkey::default()
     };
 
-    Some(UnifiedEvent::PumpSwapCreatePoolEvent(PumpSwapCreatePoolEvent {
+    Some(DexEvent::PumpSwapCreatePoolEvent(PumpSwapCreatePoolEvent {
         metadata,
         index,
         base_amount_in,
@@ -231,7 +231,7 @@ fn parse_deposit_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 24 || accounts.len() < 11 {
         return None;
     }
@@ -240,7 +240,7 @@ fn parse_deposit_instruction(
     let max_base_amount_in = u64::from_le_bytes(data[8..16].try_into().ok()?);
     let max_quote_amount_in = u64::from_le_bytes(data[16..24].try_into().ok()?);
 
-    Some(UnifiedEvent::PumpSwapDepositEvent(PumpSwapDepositEvent {
+    Some(DexEvent::PumpSwapDepositEvent(PumpSwapDepositEvent {
         metadata,
         lp_token_amount_out,
         max_base_amount_in,
@@ -263,7 +263,7 @@ fn parse_withdraw_instruction(
     data: &[u8],
     accounts: &[Pubkey],
     metadata: EventMetadata,
-) -> Option<UnifiedEvent> {
+) -> Option<DexEvent> {
     if data.len() < 24 || accounts.len() < 11 {
         return None;
     }
@@ -272,7 +272,7 @@ fn parse_withdraw_instruction(
     let min_base_amount_out = u64::from_le_bytes(data[8..16].try_into().ok()?);
     let min_quote_amount_out = u64::from_le_bytes(data[16..24].try_into().ok()?);
 
-    Some(UnifiedEvent::PumpSwapWithdrawEvent(PumpSwapWithdrawEvent {
+    Some(DexEvent::PumpSwapWithdrawEvent(PumpSwapWithdrawEvent {
         metadata,
         lp_token_amount_in,
         min_base_amount_out,

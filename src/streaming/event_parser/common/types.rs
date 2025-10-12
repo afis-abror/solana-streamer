@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use solana_sdk::{pubkey::Pubkey, signature::Signature};
 use std::{borrow::Cow, fmt, str::FromStr, sync::Arc};
 
-use crate::streaming::{common::SimdUtils, event_parser::UnifiedEvent};
+use crate::streaming::{common::SimdUtils, event_parser::DexEvent};
 
 // Object pool size configuration
 const EVENT_METADATA_POOL_SIZE: usize = 1000;
@@ -348,7 +348,7 @@ lazy_static::lazy_static! {
 
 /// Parse token transfer data from next instructions
 pub fn parse_swap_data_from_next_instructions(
-    event: &UnifiedEvent,
+    event: &DexEvent,
     inner_instruction: &solana_transaction_status::InnerInstructions,
     current_index: i8,
     accounts: &[Pubkey],
@@ -371,7 +371,7 @@ pub fn parse_swap_data_from_next_instructions(
     let mut to_vault: Option<Pubkey> = None;
 
     match event {
-        UnifiedEvent::BonkTradeEvent(e) => {
+        DexEvent::BonkTradeEvent(e) => {
             // user = Some(e.payer);
             from_mint = Some(e.base_token_mint);
             to_mint = Some(e.quote_token_mint);
@@ -380,19 +380,19 @@ pub fn parse_swap_data_from_next_instructions(
             from_vault = Some(e.base_vault);
             to_vault = Some(e.quote_vault);
         }
-        UnifiedEvent::PumpFunTradeEvent(e) => {
+        DexEvent::PumpFunTradeEvent(e) => {
             swap_data.from_mint = if e.is_buy { *SOL_MINT } else { e.mint };
             swap_data.to_mint = if e.is_buy { e.mint } else { *SOL_MINT };
         }
-        UnifiedEvent::PumpSwapBuyEvent(e) => {
+        DexEvent::PumpSwapBuyEvent(e) => {
             swap_data.from_mint = e.quote_mint;
             swap_data.to_mint = e.base_mint;
         }
-        UnifiedEvent::PumpSwapSellEvent(e) => {
+        DexEvent::PumpSwapSellEvent(e) => {
             swap_data.from_mint = e.base_mint;
             swap_data.to_mint = e.quote_mint;
         }
-        UnifiedEvent::RaydiumCpmmSwapEvent(e) => {
+        DexEvent::RaydiumCpmmSwapEvent(e) => {
             // user = Some(e.payer);
             from_mint = Some(e.input_token_mint);
             to_mint = Some(e.output_token_mint);
@@ -401,7 +401,7 @@ pub fn parse_swap_data_from_next_instructions(
             from_vault = Some(e.input_vault);
             to_vault = Some(e.output_vault);
         }
-        UnifiedEvent::RaydiumClmmSwapEvent(e) => {
+        DexEvent::RaydiumClmmSwapEvent(e) => {
             // user = Some(e.payer);
             swap_data.description =
                 Some("Unable to get from_mint and to_mint from RaydiumClmmSwapEvent".into());
@@ -410,7 +410,7 @@ pub fn parse_swap_data_from_next_instructions(
             from_vault = Some(e.input_vault);
             to_vault = Some(e.output_vault);
         }
-        UnifiedEvent::RaydiumClmmSwapV2Event(e) => {
+        DexEvent::RaydiumClmmSwapV2Event(e) => {
             // user = Some(e.payer);
             from_mint = Some(e.input_vault_mint);
             to_mint = Some(e.output_vault_mint);
@@ -419,7 +419,7 @@ pub fn parse_swap_data_from_next_instructions(
             from_vault = Some(e.input_vault);
             to_vault = Some(e.output_vault);
         }
-        UnifiedEvent::RaydiumAmmV4SwapEvent(e) => {
+        DexEvent::RaydiumAmmV4SwapEvent(e) => {
             // user = Some(e.user_source_owner);
             swap_data.description =
                 Some("Unable to get from_mint and to_mint from RaydiumAmmV4SwapEvent".into());
@@ -518,7 +518,7 @@ pub fn parse_swap_data_from_next_instructions(
 /// Parse token transfer data from next instructions
 /// TODO: - wait refactor
 pub fn parse_swap_data_from_next_grpc_instructions(
-    event: &UnifiedEvent,
+    event: &DexEvent,
     inner_instruction: &yellowstone_grpc_proto::prelude::InnerInstructions,
     current_index: i8,
     accounts: &[Pubkey],
@@ -541,7 +541,7 @@ pub fn parse_swap_data_from_next_grpc_instructions(
     let mut to_vault: Option<Pubkey> = None;
 
     match event {
-        UnifiedEvent::BonkTradeEvent(e) => {
+        DexEvent::BonkTradeEvent(e) => {
             // user = Some(e.payer);
             from_mint = Some(e.base_token_mint);
             to_mint = Some(e.quote_token_mint);
@@ -550,19 +550,19 @@ pub fn parse_swap_data_from_next_grpc_instructions(
             from_vault = Some(e.base_vault);
             to_vault = Some(e.quote_vault);
         }
-        UnifiedEvent::PumpFunTradeEvent(e) => {
+        DexEvent::PumpFunTradeEvent(e) => {
             swap_data.from_mint = if e.is_buy { *SOL_MINT } else { e.mint };
             swap_data.to_mint = if e.is_buy { e.mint } else { *SOL_MINT };
         }
-        UnifiedEvent::PumpSwapBuyEvent(e) => {
+        DexEvent::PumpSwapBuyEvent(e) => {
             swap_data.from_mint = e.quote_mint;
             swap_data.to_mint = e.base_mint;
         }
-        UnifiedEvent::PumpSwapSellEvent(e) => {
+        DexEvent::PumpSwapSellEvent(e) => {
             swap_data.from_mint = e.base_mint;
             swap_data.to_mint = e.quote_mint;
         }
-        UnifiedEvent::RaydiumCpmmSwapEvent(e) => {
+        DexEvent::RaydiumCpmmSwapEvent(e) => {
             // user = Some(e.payer);
             from_mint = Some(e.input_token_mint);
             to_mint = Some(e.output_token_mint);
@@ -571,7 +571,7 @@ pub fn parse_swap_data_from_next_grpc_instructions(
             from_vault = Some(e.input_vault);
             to_vault = Some(e.output_vault);
         }
-        UnifiedEvent::RaydiumClmmSwapEvent(e) => {
+        DexEvent::RaydiumClmmSwapEvent(e) => {
             // user = Some(e.payer);
             swap_data.description =
                 Some("Unable to get from_mint and to_mint from RaydiumClmmSwapEvent".into());
@@ -580,7 +580,7 @@ pub fn parse_swap_data_from_next_grpc_instructions(
             from_vault = Some(e.input_vault);
             to_vault = Some(e.output_vault);
         }
-        UnifiedEvent::RaydiumClmmSwapV2Event(e) => {
+        DexEvent::RaydiumClmmSwapV2Event(e) => {
             // user = Some(e.payer);
             from_mint = Some(e.input_vault_mint);
             to_mint = Some(e.output_vault_mint);
@@ -589,7 +589,7 @@ pub fn parse_swap_data_from_next_grpc_instructions(
             from_vault = Some(e.input_vault);
             to_vault = Some(e.output_vault);
         }
-        UnifiedEvent::RaydiumAmmV4SwapEvent(e) => {
+        DexEvent::RaydiumAmmV4SwapEvent(e) => {
             // user = Some(e.user_source_owner);
             swap_data.description =
                 Some("Unable to get from_mint and to_mint from RaydiumAmmV4SwapEvent".into());

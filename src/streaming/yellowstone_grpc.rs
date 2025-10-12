@@ -4,7 +4,7 @@ use crate::streaming::common::{
     SubscriptionHandle,
 };
 use crate::streaming::event_parser::common::filter::EventTypeFilter;
-use crate::streaming::event_parser::{Protocol, UnifiedEvent};
+use crate::streaming::event_parser::{Protocol, DexEvent};
 use crate::streaming::grpc::pool::factory;
 use crate::streaming::grpc::{EventPretty, SubscriptionManager};
 use anyhow::anyhow;
@@ -141,7 +141,7 @@ impl YellowstoneGrpc {
         callback: F,
     ) -> AnyResult<()>
     where
-        F: Fn(UnifiedEvent) + Send + Sync + 'static,
+        F: Fn(DexEvent) + Send + Sync + 'static,
     {
         *self.event_type_filter.write().await = event_type_filter.clone();
         if self
