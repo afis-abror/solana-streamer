@@ -18,7 +18,7 @@ use crate::streaming::{
                 get_global_program_ids, GenericEventParseConfig,
             },
         },
-        Protocol, DexEvent,
+        DexEvent, Protocol,
     },
 };
 use prost_types::Timestamp;
@@ -84,7 +84,7 @@ impl EventParser {
                             bot_wallet,
                             transaction_index,
                             inner_instructions,
-                            Arc::clone(&callback),
+                            callback.clone(),
                         )?;
                     }
                     // Immediately process inner instructions for correct ordering
@@ -114,7 +114,7 @@ impl EventParser {
                                 bot_wallet,
                                 transaction_index,
                                 Some(&inner_instructions),
-                                Arc::clone(&callback),
+                                callback.clone(),
                             )?;
                         }
                     }
@@ -175,7 +175,7 @@ impl EventParser {
                             bot_wallet,
                             transaction_index,
                             inner_instructions,
-                            Arc::clone(&callback),
+                            callback.clone(),
                         )?;
                     }
                     // Immediately process inner instructions for correct ordering
@@ -197,7 +197,7 @@ impl EventParser {
                                 bot_wallet,
                                 transaction_index,
                                 Some(&inner_instructions),
-                                Arc::clone(&callback),
+                                callback.clone(),
                             )?;
                         }
                     }
@@ -334,7 +334,7 @@ impl EventParser {
                     &inner_instructions,
                     bot_wallet,
                     transaction_index,
-                    callback.clone(),
+                    callback,
                 )
                 .await?;
             }
@@ -375,7 +375,7 @@ impl EventParser {
                                 // base64解码
                                 let compiled_instruction = CompiledInstruction {
                                     program_id_index: ui_compiled.program_id_index,
-                                    accounts: ui_compiled.accounts.clone(),
+                                    accounts: ui_compiled.accounts.to_vec(),
                                     data,
                                 };
 
@@ -447,7 +447,7 @@ impl EventParser {
             inner_instructions,
             bot_wallet,
             transaction_index,
-            callback.clone(),
+            callback,
         )
         .await
     }
@@ -699,7 +699,7 @@ impl EventParser {
                     inner_index,
                     transaction_index,
                 )
-                .map(|event| ((*disc).clone(), (*config).clone(), event))
+                .map(|event| (*disc, *config, event))
             })
             .collect();
 
@@ -723,7 +723,7 @@ impl EventParser {
                                 &config,
                             );
                             if !result.is_empty() {
-                                return Some(result[0].clone());
+                                return result.into_iter().next();
                             }
                         }
                         None
@@ -735,7 +735,7 @@ impl EventParser {
                                 &event,
                                 inner_instructions_ref,
                                 inner_index.unwrap_or(-1_i64) as i8,
-                                &accounts,
+                                accounts,
                             )
                         } else {
                             None
@@ -839,7 +839,7 @@ impl EventParser {
                     inner_index,
                     transaction_index,
                 )
-                .map(|event| ((*disc).clone(), (*config).clone(), event))
+                .map(|event| (*disc, *config, event))
             })
             .collect();
 
@@ -852,7 +852,7 @@ impl EventParser {
                     let inner_event_handle = s.spawn(|| {
                         for inner_instruction in inner_instructions_ref.instructions.iter() {
                             let result = Self::parse_events_from_grpc_inner_instruction(
-                                &inner_instruction,
+                                inner_instruction,
                                 signature,
                                 slot,
                                 block_time,
@@ -863,7 +863,7 @@ impl EventParser {
                                 &config,
                             );
                             if !result.is_empty() {
-                                return Some(result[0].clone());
+                                return result.into_iter().next();
                             }
                         }
                         None
@@ -875,7 +875,7 @@ impl EventParser {
                                 &event,
                                 inner_instructions_ref,
                                 inner_index.unwrap_or(-1_i64) as i8,
-                                &accounts,
+                                accounts,
                             )
                         } else {
                             None
@@ -931,7 +931,7 @@ impl EventParser {
             DexEvent::PumpFunTradeEvent(mut trade_info) => {
                 trade_info.is_dev_create_token_trade =
                     is_dev_address_in_signature(&signature, &trade_info.user)
-                    || is_dev_address_in_signature(&signature, &trade_info.creator);
+                        || is_dev_address_in_signature(&signature, &trade_info.creator);
                 trade_info.is_bot = Some(trade_info.user) == bot_wallet;
 
                 if let Some(swap_data) = trade_info.metadata.swap_data.as_mut() {
