@@ -96,16 +96,16 @@ async fn get_single_transaction_details(signature_str: &str) -> Result<()> {
                 Protocol::RaydiumCpmm,
                 Protocol::RaydiumAmmV4,
             ];
-            let parser: Arc<EventParser> = Arc::new(EventParser::new(protocols, None));
-            parser
-                .parse_encoded_confirmed_transaction_with_status_meta(
-                    signature,
-                    transaction,
-                    Arc::new(move |event: &UnifiedEvent| {
-                        println!("{:?}\n", event);
-                    }),
-                )
-                .await?;
+            EventParser::parse_encoded_confirmed_transaction_with_status_meta(
+                &protocols,
+                None,
+                signature,
+                transaction,
+                Arc::new(move |event: &UnifiedEvent| {
+                    println!("{:?}\n", event);
+                }),
+            )
+            .await?;
         }
         Err(e) => {
             println!("Failed to get transaction: {}", e);

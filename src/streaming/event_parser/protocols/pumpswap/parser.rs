@@ -1,6 +1,6 @@
 use crate::streaming::event_parser::{
     common::{read_u64_le, EventMetadata, EventType, ProtocolType},
-    core::event_parser::GenericEventParseConfig,
+    core::GenericEventParseConfig,
     protocols::pumpswap::{
         discriminators, pump_swap_buy_event_log_decode, pump_swap_create_pool_event_log_decode,
         pump_swap_deposit_event_log_decode, pump_swap_sell_event_log_decode,

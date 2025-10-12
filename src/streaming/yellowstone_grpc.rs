@@ -1,6 +1,7 @@
 use crate::common::AnyResult;
 use crate::streaming::common::{
-    EventProcessor, MetricsManager, PerformanceMetrics, StreamClientConfig, SubscriptionHandle,
+    process_grpc_transaction, MetricsManager, PerformanceMetrics, StreamClientConfig,
+    SubscriptionHandle,
 };
 use crate::streaming::event_parser::common::filter::EventTypeFilter;
 use crate::streaming::event_parser::{Protocol, UnifiedEvent};
@@ -41,7 +42,6 @@ pub struct YellowstoneGrpc {
     pub x_token: Option<String>,
     pub config: StreamClientConfig,
     pub subscription_manager: SubscriptionManager,
-    pub event_processor: EventProcessor,
     pub subscription_handle: Arc<Mutex<Option<SubscriptionHandle>>>,
     // Dynamic subscription management fields
     pub active_subscription: Arc<AtomicBool>,
@@ -67,14 +67,12 @@ impl YellowstoneGrpc {
         let subscription_manager =
             SubscriptionManager::new(endpoint.clone(), x_token.clone(), config.clone());
         MetricsManager::init(config.enable_metrics);
-        let event_processor = EventProcessor::new(config.clone());
 
         Ok(Self {
             endpoint,
             x_token,
             config,
             subscription_manager,
-            event_processor,
             subscription_handle: Arc::new(Mutex::new(None)),
             active_subscription: Arc::new(AtomicBool::new(false)),
             control_tx: Arc::new(tokio::sync::Mutex::new(None)),
@@ -179,14 +177,9 @@ impl YellowstoneGrpc {
         let (control_tx, mut control_rx) = mpsc::channel(100);
         *self.control_tx.lock().await = Some(control_tx);
 
-        // 启动流处理任务
-        let mut event_processor = self.event_processor.clone();
-        event_processor.set_protocols_and_event_type_filter(
-            super::common::EventSource::Grpc,
-            protocols,
-            event_type_filter,
-            Some(Arc::new(callback)),
-        );
+        // Wrap callback once before the async block
+        let callback = Arc::new(callback);
+
         let stream_handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -198,12 +191,14 @@ impl YellowstoneGrpc {
                                     Some(UpdateOneof::Account(account)) => {
                                         let account_pretty = factory::create_account_pretty_pooled(account);
                                         log::debug!("Received account: {:?}", account_pretty);
-                                        if let Err(e) = event_processor
-                                            .process_grpc_transaction(
-                                                EventPretty::Account(account_pretty),
-                                                bot_wallet,
-                                            )
-                                            .await
+                                        if let Err(e) = process_grpc_transaction(
+                                            EventPretty::Account(account_pretty),
+                                            &protocols,
+                                            event_type_filter.as_ref(),
+                                            callback.clone(),
+                                            bot_wallet,
+                                        )
+                                        .await
                                         {
                                             error!("Error processing account event: {e:?}");
                                         }
@@ -211,12 +206,14 @@ impl YellowstoneGrpc {
                                     Some(UpdateOneof::BlockMeta(sut)) => {
                                         let block_meta_pretty = factory::create_block_meta_pretty_pooled(sut, created_at);
                                         log::debug!("Received block meta: {:?}", block_meta_pretty);
-                                        if let Err(e) = event_processor
-                                            .process_grpc_transaction(
-                                                EventPretty::BlockMeta(block_meta_pretty),
-                                                bot_wallet,
-                                            )
-                                            .await
+                                        if let Err(e) = process_grpc_transaction(
+                                            EventPretty::BlockMeta(block_meta_pretty),
+                                            &protocols,
+                                            event_type_filter.as_ref(),
+                                            callback.clone(),
+                                            bot_wallet,
+                                        )
+                                        .await
                                         {
                                             error!("Error processing block meta event: {e:?}");
                                         }
@@ -228,12 +225,14 @@ impl YellowstoneGrpc {
                                             transaction_pretty.signature,
                                             transaction_pretty.slot
                                         );
-                                        if let Err(e) = event_processor
-                                            .process_grpc_transaction(
-                                                EventPretty::Transaction(transaction_pretty),
-                                                bot_wallet,
-                                            )
-                                            .await
+                                        if let Err(e) = process_grpc_transaction(
+                                            EventPretty::Transaction(transaction_pretty),
+                                            &protocols,
+                                            event_type_filter.as_ref(),
+                                            callback.clone(),
+                                            bot_wallet,
+                                        )
+                                        .await
                                         {
                                             error!("Error processing transaction event: {e:?}");
                                         }
@@ -352,7 +351,6 @@ impl Clone for YellowstoneGrpc {
             x_token: self.x_token.clone(),
             config: self.config.clone(),
             subscription_manager: self.subscription_manager.clone(),
-            event_processor: self.event_processor.clone(),
             subscription_handle: self.subscription_handle.clone(), // 共享同一个 Arc<Mutex<>>
             active_subscription: self.active_subscription.clone(),
             control_tx: self.control_tx.clone(),

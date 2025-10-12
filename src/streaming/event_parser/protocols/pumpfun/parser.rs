@@ -1,6 +1,6 @@
 use crate::streaming::event_parser::{
     common::{EventMetadata, EventType, ProtocolType},
-    core::event_parser::GenericEventParseConfig,
+    core::GenericEventParseConfig,
     protocols::pumpfun::{
         discriminators, pumpfun_create_token_event_log_decode, pumpfun_migrate_event_log_decode,
         pumpfun_trade_event_log_decode, PumpFunCreateTokenEvent, PumpFunMigrateEvent,

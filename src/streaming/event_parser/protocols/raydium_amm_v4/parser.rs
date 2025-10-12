@@ -1,6 +1,6 @@
 use crate::streaming::event_parser::{
     common::{read_u64_le, EventMetadata, EventType, ProtocolType},
-    core::event_parser::GenericEventParseConfig,
+    core::GenericEventParseConfig,
     protocols::raydium_amm_v4::{
         discriminators, RaydiumAmmV4DepositEvent, RaydiumAmmV4Initialize2Event,
         RaydiumAmmV4SwapEvent, RaydiumAmmV4WithdrawEvent, RaydiumAmmV4WithdrawPnlEvent,

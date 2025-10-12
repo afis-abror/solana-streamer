@@ -3,7 +3,7 @@ use crate::streaming::event_parser::{
         read_i32_le, read_option_bool, read_u128_le, read_u64_le, read_u8_le, EventMetadata,
         EventType, ProtocolType,
     },
-    core::event_parser::GenericEventParseConfig,
+    core::GenericEventParseConfig,
     protocols::raydium_clmm::{
         discriminators, RaydiumClmmClosePositionEvent, RaydiumClmmCreatePoolEvent,
         RaydiumClmmDecreaseLiquidityV2Event, RaydiumClmmIncreaseLiquidityV2Event,

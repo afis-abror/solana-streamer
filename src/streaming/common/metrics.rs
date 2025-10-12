@@ -104,21 +104,15 @@ impl AtomicEventMetrics {
 /// High-performance atomic processing time statistics
 #[derive(Debug)]
 struct AtomicProcessingTimeStats {
-    min_time_bits: AtomicU64,
-    max_time_bits: AtomicU64,
-    min_time_timestamp_nanos: AtomicU64, // Timestamp of min value update (nanoseconds)
-    max_time_timestamp_nanos: AtomicU64, // Timestamp of max value update (nanoseconds)
-    total_time_us: AtomicU64,            // Store integer part of microseconds
+    last_time_bits: AtomicU64, // Last processing time (f64 as u64 bits)
+    total_time_us: AtomicU64,  // Store integer part of microseconds
     total_events: AtomicU64,
 }
 
 impl AtomicProcessingTimeStats {
     const fn new_const() -> Self {
         Self {
-            min_time_bits: AtomicU64::new(f64::INFINITY.to_bits()),
-            max_time_bits: AtomicU64::new(0),
-            min_time_timestamp_nanos: AtomicU64::new(0),
-            max_time_timestamp_nanos: AtomicU64::new(0),
+            last_time_bits: AtomicU64::new(0),
             total_time_us: AtomicU64::new(0),
             total_events: AtomicU64::new(0),
         }
@@ -129,33 +123,8 @@ impl AtomicProcessingTimeStats {
     fn update(&self, time_us: f64, event_count: u64) {
         let time_bits = time_us.to_bits();
 
-        // Fast path: Update min value without timestamp check (checked in background task)
-        let mut current_min = self.min_time_bits.load(Ordering::Relaxed);
-        while time_bits < current_min {
-            match self.min_time_bits.compare_exchange_weak(
-                current_min,
-                time_bits,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(x) => current_min = x,
-            }
-        }
-
-        // Fast path: Update max value without timestamp check (checked in background task)
-        let mut current_max = self.max_time_bits.load(Ordering::Relaxed);
-        while time_bits > current_max {
-            match self.max_time_bits.compare_exchange_weak(
-                current_max,
-                time_bits,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(x) => current_max = x,
-            }
-        }
+        // Update last processing time (simple store, no compare-exchange needed)
+        self.last_time_bits.store(time_bits, Ordering::Relaxed);
 
         // Update cumulative values (convert microseconds to integers to avoid floating point accumulation issues)
         let total_time_us_int = (time_us * event_count as f64) as u64;
@@ -163,55 +132,26 @@ impl AtomicProcessingTimeStats {
         self.total_events.fetch_add(event_count, Ordering::Relaxed);
     }
 
-    /// Reset min/max if they are older than 10 seconds (called by background task)
-    #[inline]
-    fn reset_stale_min_max(&self) {
-        let now_nanos =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-                as u64;
-
-        // Check and reset min if stale
-        let min_timestamp = self.min_time_timestamp_nanos.load(Ordering::Relaxed);
-        if now_nanos.saturating_sub(min_timestamp) > 10_000_000_000 {
-            self.min_time_bits.store(f64::INFINITY.to_bits(), Ordering::Relaxed);
-            self.min_time_timestamp_nanos.store(now_nanos, Ordering::Relaxed);
-        }
-
-        // Check and reset max if stale
-        let max_timestamp = self.max_time_timestamp_nanos.load(Ordering::Relaxed);
-        if now_nanos.saturating_sub(max_timestamp) > 10_000_000_000 {
-            self.max_time_bits.store(0, Ordering::Relaxed);
-            self.max_time_timestamp_nanos.store(now_nanos, Ordering::Relaxed);
-        }
-    }
-
     /// Get statistics (non-blocking)
     #[inline]
     fn get_stats(&self) -> ProcessingTimeStats {
-        let min_bits = self.min_time_bits.load(Ordering::Relaxed);
-        let max_bits = self.max_time_bits.load(Ordering::Relaxed);
+        let last_bits = self.last_time_bits.load(Ordering::Relaxed);
         let total_time_us_int = self.total_time_us.load(Ordering::Relaxed);
         let total_events = self.total_events.load(Ordering::Relaxed);
 
-        let min_time = f64::from_bits(min_bits);
-        let max_time = f64::from_bits(max_bits);
+        let last_time = f64::from_bits(last_bits);
         let avg_time =
             if total_events > 0 { total_time_us_int as f64 / total_events as f64 } else { 0.0 };
 
-        ProcessingTimeStats {
-            min_us: if min_time == f64::INFINITY { 0.0 } else { min_time },
-            max_us: max_time,
-            avg_us: avg_time,
-        }
+        ProcessingTimeStats { last_us: last_time, avg_us: avg_time }
     }
 }
 
 /// Processing time statistics result
 #[derive(Debug, Clone)]
 pub struct ProcessingTimeStats {
-    pub min_us: f64,
-    pub max_us: f64,
-    pub avg_us: f64,
+    pub last_us: f64, // Last processing time in microseconds
+    pub avg_us: f64,  // Average processing time in microseconds
 }
 
 /// Event metrics snapshot
@@ -236,7 +176,7 @@ pub struct PerformanceMetrics {
 impl PerformanceMetrics {
     /// Create default performance metrics (compatibility method)
     pub fn new() -> Self {
-        let default_stats = ProcessingTimeStats { min_us: 0.0, max_us: 0.0, avg_us: 0.0 };
+        let default_stats = ProcessingTimeStats { last_us: 0.0, avg_us: 0.0 };
         let default_metrics = EventMetricsSnapshot {
             process_count: 0,
             events_processed: 0,
@@ -384,12 +324,6 @@ impl MetricsManager {
                     GLOBAL_METRICS.update_window_metrics(EventType::Account, window_duration_nanos);
                     GLOBAL_METRICS
                         .update_window_metrics(EventType::BlockMeta, window_duration_nanos);
-
-                    // Reset stale min/max values (10 second expiry) - moved from hot path
-                    GLOBAL_METRICS.processing_stats.reset_stale_min_max();
-                    for event_metric in &GLOBAL_METRICS.event_metrics {
-                        event_metric.processing_stats.reset_stale_min_max();
-                    }
                 }
             });
         }
@@ -467,24 +401,23 @@ impl MetricsManager {
         }
 
         // 打印事件指标表格（包含处理时间统计）
-        println!("┌─────────────┬──────────────┬──────────────────┬─────────────┬─────────────┬─────────────┐");
-        println!("│ Event Type  │ Process Count│ Events Processed │ Avg Time(μs)│ Min 10s(μs) │ Max 10s(μs) │");
-        println!("├─────────────┼──────────────┼──────────────────┼─────────────┼─────────────┼─────────────┤");
+        println!("┌─────────────┬──────────────┬──────────────────┬─────────────┬─────────────┐");
+        println!("│ Event Type  │ Process Count│ Events Processed │ Last(μs)    │ Avg(μs)     │");
+        println!("├─────────────┼──────────────┼──────────────────┼─────────────┼─────────────┤");
 
         for event_type in [EventType::Transaction, EventType::Account, EventType::BlockMeta] {
             let metrics = self.get_event_metrics(event_type);
             println!(
-                "│ {:11} │ {:12} │ {:16} │ {:9.2}   │ {:9.2}   │ {:9.2}   │",
+                "│ {:11} │ {:12} │ {:16} │ {:9.2}   │ {:9.2}   │",
                 event_type.name(),
                 metrics.process_count,
                 metrics.events_processed,
-                metrics.processing_stats.avg_us,
-                metrics.processing_stats.min_us,
-                metrics.processing_stats.max_us
+                metrics.processing_stats.last_us,
+                metrics.processing_stats.avg_us
             );
         }
 
-        println!("└─────────────┴──────────────┴──────────────────┴─────────────┴─────────────┴─────────────┘");
+        println!("└─────────────┴──────────────┴──────────────────┴─────────────┴─────────────┘");
         println!();
     }
 
