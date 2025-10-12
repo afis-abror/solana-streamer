@@ -1,18 +1,14 @@
 use std::str::FromStr;
 
 use solana_sdk::pubkey::Pubkey;
-use solana_streamer_sdk::{
-    match_event,
-    streaming::{
-        event_parser::{
-            common::{filter::EventTypeFilter, EventType},
-            core::account_event_parser::TokenAccountEvent,
-            UnifiedEvent,
-        },
-        grpc::ClientConfig,
-        yellowstone_grpc::{AccountFilter, TransactionFilter},
-        YellowstoneGrpc,
+use solana_streamer_sdk::streaming::{
+    event_parser::{
+        common::{filter::EventTypeFilter, EventType},
+        DexEvent,
     },
+    grpc::ClientConfig,
+    yellowstone_grpc::{AccountFilter, TransactionFilter},
+    YellowstoneGrpc,
 };
 use yellowstone_grpc_proto::geyser::{
     subscribe_request_filter_accounts_filter::Filter,
@@ -108,12 +104,11 @@ async fn test_grpc() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn create_event_callback() -> impl Fn(Box<dyn UnifiedEvent>) {
-    |event: Box<dyn UnifiedEvent>| {
-        match_event!(event, {
-            TokenAccountEvent => |e: TokenAccountEvent| {
-                println!("TokenAccount: {:?} amount: {:?}", e.pubkey, e.amount);
-            },
-        });
+fn create_event_callback() -> impl Fn(DexEvent) {
+    |event: DexEvent| match event {
+        DexEvent::TokenAccountEvent(e) => {
+            println!("TokenAccount: {:?} amount: {:?}", e.pubkey, e.amount);
+        }
+        _ => {}
     }
 }
