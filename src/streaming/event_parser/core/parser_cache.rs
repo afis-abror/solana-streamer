@@ -327,9 +327,11 @@ impl Default for AccountPubkeyCache {
     }
 }
 
+use std::sync::Mutex;
+
 thread_local! {
-    static THREAD_LOCAL_ACCOUNT_CACHE: std::cell::RefCell<AccountPubkeyCache> =
-        std::cell::RefCell::new(AccountPubkeyCache::new());
+    static THREAD_LOCAL_ACCOUNT_CACHE: Mutex<AccountPubkeyCache> =
+        Mutex::new(AccountPubkeyCache::new());
 }
 
 /// 从线程局部缓存构建账户公钥列表
@@ -349,7 +351,7 @@ pub fn build_account_pubkeys_with_cache(
     all_accounts: &[Pubkey],
 ) -> Vec<Pubkey> {
     THREAD_LOCAL_ACCOUNT_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
+        let mut cache = cache.lock().expect("Failed to lock thread-local account cache");
         cache.build_account_pubkeys(instruction_accounts, all_accounts).to_vec()
     })
 }

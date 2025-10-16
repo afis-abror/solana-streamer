@@ -1,15 +1,19 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use futures::SinkExt;
 use tokio::sync::Mutex;
+use tokio::time::{sleep, timeout};
 use tonic::transport::Channel;
+use anyhow;
 use crate::protos::shreder;
 use crate::protos::shreder::{
     shreder_service_client::ShrederServiceClient,
     SubscribeRequestFilterTransactions, 
     SubscribeTransactionsRequest,
 };
-use log::error;
+use crate::streaming::storage::TransactionStorage;
+use log::{error, warn, info};
 use crate::common::AnyResult;
 use crate::streaming::common::{process_shred_transaction, MetricsManager, StreamClientConfig, SubscriptionHandle};
 use crate::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
@@ -32,6 +36,8 @@ pub struct ShrederClient {
     pub shredstream_client: Arc<ShrederServiceClient<Channel>>,
     pub config: StreamClientConfig,
     pub subscription_handle: Arc<Mutex<Option<SubscriptionHandle>>>,
+    pub transactions: Arc<TransactionStorage>,
+    pub endpoint: String,
 }
 
 impl ShrederClient {
@@ -46,6 +52,20 @@ impl ShrederClient {
             shredstream_client: Arc::new(shredstream_client),
             config,
             subscription_handle: Arc::new(Mutex::new(None)),
+            transactions: Arc::new(TransactionStorage::new()),
+            endpoint,
+        })
+    }
+
+    pub async fn new_with_storage(endpoint: String, config: StreamClientConfig, storage: Arc<TransactionStorage>) -> AnyResult<Self> {
+        let shredstream_client = ShrederServiceClient::connect(endpoint.clone()).await?;
+        MetricsManager::init(config.enable_metrics);
+        Ok(Self {
+            shredstream_client: Arc::new(shredstream_client),
+            config,
+            subscription_handle: Arc::new(Mutex::new(None)),
+            transactions: storage,
+            endpoint,
         })
     }
 
@@ -66,10 +86,16 @@ impl ShrederClient {
             metrics_handle = MetricsManager::global().start_auto_monitoring().await;
         }
 
-        let mut client = (*self.shredstream_client).clone();
-        // Create transaction filters based on protocols (dynamic)
+        // Clone necessary data for the stream task
+        let auto_reconnect_config = self.config.auto_reconnect.clone();
+        let endpoint = self.endpoint.clone();
+        let connection_config = self.config.connection.clone();
+        let protocols_clone = protocols.clone();
+        let callback = Arc::new(callback);
+        let transactions = self.transactions.clone();
+
+        // Create the subscription request
         let mut transaction_filters = HashMap::new();
-        
         for protocol in &protocols {
             let program_ids = protocol.get_program_id();
             let program_id_strings: Vec<String> = program_ids.iter()
@@ -96,53 +122,177 @@ impl ShrederClient {
         }
 
         let request = SubscribeTransactionsRequest {transactions: transaction_filters};
-        let (mut subscribe_tx, subscribe_rx) = futures::channel::mpsc::unbounded::<SubscribeTransactionsRequest>();
-        let mut stream = client.subscribe_transactions(subscribe_rx).await.unwrap().into_inner();
-        
-        let callback = Arc::new(callback);
 
         let stream_task = tokio::spawn(async move {
-
-            // Send the request
-            let _ = subscribe_tx.send(request).await;
-
-            while let Some(message) = stream.message().await.unwrap() {
-                if let Some(transaction_update) = &message.transaction {
-                    if let Some(shreder_tx) = transaction_update.transaction.as_ref() {
-                        let versioned_tx = convert_shreder_to_versioned_transaction(shreder_tx);
-                        let versioned_tx = match versioned_tx {
-                            Ok(vtx) => vtx,
-                            Err(e) => {
-                                error!("Failed to convert Shreder transaction: {:?}", e);
-                                continue;
+            let mut retry_attempt = 0u32;
+            
+            loop {
+                // Try to establish connection
+                let client = if retry_attempt == 0 {
+                    // First attempt - try to use existing connection or create new one
+                    match ShrederServiceClient::connect(endpoint.clone()).await {
+                        Ok(client) => client,
+                        Err(e) => {
+                            error!("Failed to connect to shreder service: {:?}", e);
+                            if !auto_reconnect_config.enabled {
+                                break;
                             }
-                        };
-                        if versioned_tx.signatures.is_empty() {
+                            retry_attempt += 1;
                             continue;
                         }
-
-                        let transaction_with_slot = factory::create_transaction_with_slot_pooled(
-                            versioned_tx,
-                            transaction_update.slot,
-                            get_high_perf_clock(),
-                        );
-
-                        if let Err(e) = process_shred_transaction(
-                            transaction_with_slot,
-                            &protocols,
-                            event_type_filter.as_ref(),
-                            callback.clone(),
-                            bot_wallet,
-                        )
-                        .await
-                        {
-                            error!("Error handling message: {e:?}");
-                        }
-                    } 
+                    }
                 } else {
-                    log::warn!("Received message without transaction data");
+                    // Reconnection attempt
+                    if auto_reconnect_config.max_retries > 0 && retry_attempt > auto_reconnect_config.max_retries {
+                        error!("Max reconnection attempts ({}) exceeded", auto_reconnect_config.max_retries);
+                        break;
+                    }
+
+                    let delay_ms = std::cmp::min(
+                        (auto_reconnect_config.initial_delay_ms as f64 
+                            * auto_reconnect_config.backoff_multiplier.powi((retry_attempt - 1) as i32)) as u64,
+                        auto_reconnect_config.max_delay_ms
+                    );
+                    
+                    warn!("Reconnecting in {}ms (attempt {})...", delay_ms, retry_attempt);
+                    sleep(Duration::from_millis(delay_ms)).await;
+                    
+                    match timeout(
+                        Duration::from_secs(connection_config.connect_timeout),
+                        ShrederServiceClient::connect(endpoint.clone())
+                    ).await {
+                        Ok(Ok(client)) => {
+                            info!("Successfully reconnected to shreder service");
+                            client
+                        },
+                        Ok(Err(e)) => {
+                            error!("Failed to reconnect: {:?}", e);
+                            retry_attempt += 1;
+                            continue;
+                        },
+                        Err(_) => {
+                            error!("Connection timeout during reconnect");
+                            retry_attempt += 1;
+                            continue;
+                        }
+                    }
+                };
+
+                let mut client = client;
+                let (mut subscribe_tx, subscribe_rx) = futures::channel::mpsc::unbounded::<SubscribeTransactionsRequest>();
+                
+                // Attempt to create stream
+                let stream_result = timeout(
+                    Duration::from_secs(connection_config.request_timeout),
+                    client.subscribe_transactions(subscribe_rx)
+                ).await;
+
+                let mut stream = match stream_result {
+                    Ok(Ok(response)) => response.into_inner(),
+                    Ok(Err(e)) => {
+                        error!("Failed to create subscription stream: {:?}", e);
+                        if !auto_reconnect_config.enabled {
+                            break;
+                        }
+                        retry_attempt += 1;
+                        continue;
+                    },
+                    Err(_) => {
+                        error!("Timeout creating subscription stream");
+                        if !auto_reconnect_config.enabled {
+                            break;
+                        }
+                        retry_attempt += 1;
+                        continue;
+                    }
+                };
+
+                // Send the initial request
+                if let Err(e) = subscribe_tx.send(request.clone()).await {
+                    error!("Failed to send subscription request: {:?}", e);
+                    if !auto_reconnect_config.enabled {
+                        break;
+                    }
+                    retry_attempt += 1;
+                    continue;
                 }
-            }        
+
+                info!("Successfully connected and subscribed to shreder stream");
+                retry_attempt = 0; // Reset retry counter on successful connection
+
+                // Process stream messages
+                let stream_broken = loop {
+                    match stream.message().await {
+                        Ok(Some(message)) => {
+                            if let Some(transaction_update) = &message.transaction {
+                                if let Some(shreder_tx) = transaction_update.transaction.as_ref() {
+                                    let versioned_tx = convert_shreder_to_versioned_transaction(shreder_tx);
+                                    let versioned_tx = match versioned_tx {
+                                        Ok(vtx) => vtx,
+                                        Err(e) => {
+                                            error!("Failed to convert Shreder transaction: {:?}", e);
+                                            continue;
+                                        }
+                                    };
+
+                                    if versioned_tx.signatures.is_empty() {
+                                        continue;
+                                    }
+
+                                    transactions.insert(versioned_tx.signatures[0].to_string(), versioned_tx.clone()).await;
+                                    let transaction_with_slot = factory::create_transaction_with_slot_pooled(
+                                        versioned_tx,
+                                        transaction_update.slot,
+                                        get_high_perf_clock(),
+                                    );
+
+                                    if let Err(e) = process_shred_transaction(
+                                        transaction_with_slot,
+                                        &protocols_clone,
+                                        event_type_filter.as_ref(),
+                                        callback.clone(),
+                                        bot_wallet,
+                                    )
+                                    .await
+                                    {
+                                        error!("Error handling message: {e:?}");
+                                    }
+                                } 
+                            } else {
+                                warn!("Received message without transaction data");
+                            }
+                        },
+                        Ok(None) => {
+                            warn!("Stream ended unexpectedly");
+                            break true; // Stream ended, need to reconnect
+                        },
+                        Err(e) => {
+                            error!("Stream error: {:?}", e);
+                            // Check if this is a connection error that warrants reconnection
+                            let error_str = e.to_string().to_lowercase();
+                            if error_str.contains("broken pipe") 
+                                || error_str.contains("connection") 
+                                || error_str.contains("h2 protocol error")
+                                || error_str.contains("stream closed") {
+                                warn!("Connection-related error detected, will attempt to reconnect");
+                                break true; // Connection error, need to reconnect
+                            } else {
+                                error!("Non-recoverable stream error: {:?}", e);
+                                break false; // Non-recoverable error, exit
+                            }
+                        }
+                    }
+                };
+
+                if !stream_broken || !auto_reconnect_config.enabled {
+                    break;
+                }
+
+                retry_attempt += 1;
+                warn!("Stream connection lost, preparing to reconnect...");
+            }
+            
+            info!("Shreder stream task ended");
         });
 
         let subscription_handle = SubscriptionHandle::new(stream_task, None, metrics_handle);
