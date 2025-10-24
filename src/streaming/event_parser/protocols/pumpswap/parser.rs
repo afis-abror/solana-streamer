@@ -123,7 +123,7 @@ fn parse_buy_instruction(
     accounts: &[Pubkey],
     metadata: EventMetadata,
 ) -> Option<DexEvent> {
-    if data.len() < 16 || accounts.len() < 11 {
+    if data.len() < 16 || accounts.len() < 13 {
         return None;
     }
 
@@ -158,7 +158,7 @@ fn parse_sell_instruction(
     accounts: &[Pubkey],
     metadata: EventMetadata,
 ) -> Option<DexEvent> {
-    if data.len() < 16 || accounts.len() < 11 {
+    if data.len() < 16 || accounts.len() < 13 {
         return None;
     }
 

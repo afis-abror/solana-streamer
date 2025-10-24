@@ -1,10 +1,11 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use futures::SinkExt;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
-use tonic::transport::Channel;
+use tonic::transport::{Channel, Endpoint};
 use anyhow;
 use crate::protos::shreder;
 use crate::protos::shreder::{
@@ -38,6 +39,7 @@ pub struct ShrederClient {
     pub subscription_handle: Arc<Mutex<Option<SubscriptionHandle>>>,
     pub transactions: Arc<TransactionStorage>,
     pub endpoint: String,
+    pub local_addr: Option<IpAddr>,
 }
 
 impl ShrederClient {
@@ -46,7 +48,15 @@ impl ShrederClient {
     }
 
     pub async fn new_with_config(endpoint: String, config: StreamClientConfig) -> AnyResult<Self> {
-        let shredstream_client = ShrederServiceClient::connect(endpoint.clone()).await?;
+        Self::new_with_config_and_local_addr(endpoint, config, None).await
+    }
+
+    pub async fn new_with_local_addr(endpoint: String, local_addr: IpAddr) -> AnyResult<Self> {
+        Self::new_with_config_and_local_addr(endpoint, StreamClientConfig::default(), Some(local_addr)).await
+    }
+
+    pub async fn new_with_config_and_local_addr(endpoint: String, config: StreamClientConfig, local_addr: Option<IpAddr>) -> AnyResult<Self> {
+        let shredstream_client = Self::create_client(&endpoint, local_addr.as_ref()).await?;
         MetricsManager::init(config.enable_metrics);
         Ok(Self {
             shredstream_client: Arc::new(shredstream_client),
@@ -54,11 +64,16 @@ impl ShrederClient {
             subscription_handle: Arc::new(Mutex::new(None)),
             transactions: Arc::new(TransactionStorage::new()),
             endpoint,
+            local_addr,
         })
     }
 
     pub async fn new_with_storage(endpoint: String, config: StreamClientConfig, storage: Arc<TransactionStorage>) -> AnyResult<Self> {
-        let shredstream_client = ShrederServiceClient::connect(endpoint.clone()).await?;
+        Self::new_with_storage_and_local_addr(endpoint, config, storage, None).await
+    }
+
+    pub async fn new_with_storage_and_local_addr(endpoint: String, config: StreamClientConfig, storage: Arc<TransactionStorage>, local_addr: Option<IpAddr>) -> AnyResult<Self> {
+        let shredstream_client = Self::create_client(&endpoint, local_addr.as_ref()).await?;
         MetricsManager::init(config.enable_metrics);
         Ok(Self {
             shredstream_client: Arc::new(shredstream_client),
@@ -66,7 +81,73 @@ impl ShrederClient {
             subscription_handle: Arc::new(Mutex::new(None)),
             transactions: storage,
             endpoint,
+            local_addr,
         })
+    }
+
+    async fn create_client(endpoint: &str, local_addr: Option<&IpAddr>) -> AnyResult<ShrederServiceClient<Channel>> {
+        if let Some(addr) = local_addr {
+            let addr_owned = *addr;
+            
+            // Use connect_with_connector but do the binding properly
+            let channel = Endpoint::from_shared(endpoint.to_string())?
+                .connect_with_connector(tower::service_fn(move |uri: tonic::transport::Uri| {
+                    async move {
+                        let host = uri.host().ok_or_else(|| {
+                            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Missing host")
+                        })?;
+                        let port = uri.port_u16().unwrap_or(50051);
+                        
+                        // Resolve the hostname to IP
+                        let remote_addr: SocketAddr = tokio::net::lookup_host(format!("{}:{}", host, port))
+                            .await?
+                            .next()
+                            .ok_or_else(|| std::io::Error::new(
+                                std::io::ErrorKind::NotFound, 
+                                "Could not resolve hostname"
+                            ))?;
+                        
+                        // Create socket with the appropriate domain
+                        let domain = if remote_addr.is_ipv4() { 
+                            socket2::Domain::IPV4 
+                        } else { 
+                            socket2::Domain::IPV6 
+                        };
+                        
+                        let socket = socket2::Socket::new(
+                            domain,
+                            socket2::Type::STREAM,
+                            Some(socket2::Protocol::TCP),
+                        )?;
+                        
+                        socket.set_reuse_address(true)?;
+                        socket.set_nodelay(true)?;
+                        
+                        // Bind to local address with port 0 (let OS choose)
+                        let bind_addr = SocketAddr::new(addr_owned, 0);
+                        socket.bind(&bind_addr.into())?;
+                        
+                        // Connect in blocking mode first
+                        socket.connect(&remote_addr.into())?;
+                        
+                        // Convert to std stream and set non-blocking
+                        let std_stream: std::net::TcpStream = socket.into();
+                        std_stream.set_nonblocking(true)?;
+                        
+                        // Convert to tokio stream
+                        let tokio_stream = tokio::net::TcpStream::from_std(std_stream)?;
+                        
+                        // Wrap with hyper_util::rt::TokioIo
+                        Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(tokio_stream))
+                    }
+                }))
+                .await?;
+            
+            Ok(ShrederServiceClient::new(channel))
+        } else {
+            // No local address specified, use default connection
+            Ok(ShrederServiceClient::connect(endpoint.to_string()).await?)
+        }
     }
 
     pub async fn shredstream_subscribe<F>(
@@ -89,6 +170,7 @@ impl ShrederClient {
         // Clone necessary data for the stream task
         let auto_reconnect_config = self.config.auto_reconnect.clone();
         let endpoint = self.endpoint.clone();
+        let local_addr = self.local_addr;
         let connection_config = self.config.connection.clone();
         let protocols_clone = protocols.clone();
         let callback = Arc::new(callback);
@@ -130,7 +212,7 @@ impl ShrederClient {
                 // Try to establish connection
                 let client = if retry_attempt == 0 {
                     // First attempt - try to use existing connection or create new one
-                    match ShrederServiceClient::connect(endpoint.clone()).await {
+                    match Self::create_client(&endpoint, local_addr.as_ref()).await {
                         Ok(client) => client,
                         Err(e) => {
                             error!("Failed to connect to shreder service: {:?}", e);
@@ -159,7 +241,7 @@ impl ShrederClient {
                     
                     match timeout(
                         Duration::from_secs(connection_config.connect_timeout),
-                        ShrederServiceClient::connect(endpoint.clone())
+                        Self::create_client(&endpoint, local_addr.as_ref())
                     ).await {
                         Ok(Ok(client)) => {
                             info!("Successfully reconnected to shreder service");
@@ -224,7 +306,8 @@ impl ShrederClient {
                 let stream_broken = loop {
                     match stream.message().await {
                         Ok(Some(message)) => {
-                            if let Some(transaction_update) = &message.transaction {
+                            let receive_us = get_high_perf_clock();
+                            if let Some(transaction_update) = &message.transaction {                                
                                 if let Some(shreder_tx) = transaction_update.transaction.as_ref() {
                                     let versioned_tx = convert_shreder_to_versioned_transaction(shreder_tx);
                                     let versioned_tx = match versioned_tx {
@@ -243,7 +326,7 @@ impl ShrederClient {
                                     let transaction_with_slot = factory::create_transaction_with_slot_pooled(
                                         versioned_tx,
                                         transaction_update.slot,
-                                        get_high_perf_clock(),
+                                        receive_us,
                                     );
 
                                     if let Err(e) = process_shred_transaction(
