@@ -88,10 +88,7 @@ fn parse_sell_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<
 }
 
 /// 解析创建池子日志事件
-fn parse_create_pool_inner_instruction(
-    data: &[u8],
-    metadata: EventMetadata,
-) -> Option<DexEvent> {
+fn parse_create_pool_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
     if let Some(event) = pump_swap_create_pool_event_log_decode(data) {
         Some(DexEvent::PumpSwapCreatePoolEvent(PumpSwapCreatePoolEvent { metadata, ..event }))
     } else {

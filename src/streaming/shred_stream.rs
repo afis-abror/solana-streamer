@@ -8,7 +8,7 @@ use crate::protos::shredstream::SubscribeEntriesRequest;
 use crate::streaming::common::{process_shred_transaction, SubscriptionHandle};
 use crate::streaming::event_parser::common::filter::EventTypeFilter;
 use crate::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
-use crate::streaming::event_parser::{Protocol, DexEvent};
+use crate::streaming::event_parser::{DexEvent, Protocol};
 use crate::streaming::grpc::MetricsManager;
 use crate::streaming::shred::pool::factory;
 use log::error;

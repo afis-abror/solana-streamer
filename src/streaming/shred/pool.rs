@@ -1,10 +1,9 @@
-use std::sync::{Arc, Mutex};
+use solana_sdk::transaction::VersionedTransaction;
 use std::collections::VecDeque;
 use std::ops::DerefMut;
-use solana_sdk::transaction::VersionedTransaction;
+use std::sync::{Arc, Mutex};
 
 use super::TransactionWithSlot;
-
 
 /// TransactionWithSlot 对象池
 pub struct TransactionWithSlotPool {
@@ -31,10 +30,10 @@ impl TransactionWithSlotPool {
             None => Box::new(TransactionWithSlot::default()),
         };
 
-        PooledTransactionWithSlot { 
-            transaction, 
-            pool: Arc::clone(&self.pool), 
-            max_size: self.max_size 
+        PooledTransactionWithSlot {
+            transaction,
+            pool: Arc::clone(&self.pool),
+            max_size: self.max_size,
         }
     }
 }
@@ -48,12 +47,7 @@ pub struct PooledTransactionWithSlot {
 
 impl PooledTransactionWithSlot {
     /// 从原始数据重置
-    pub fn reset_from_data(
-        &mut self, 
-        transaction: VersionedTransaction, 
-        slot: u64, 
-        recv_us: i64
-    ) {
+    pub fn reset_from_data(&mut self, transaction: VersionedTransaction, slot: u64, recv_us: i64) {
         self.transaction.transaction = transaction;
         self.transaction.slot = slot;
         self.transaction.recv_us = recv_us;
@@ -147,10 +141,6 @@ pub mod factory {
         slot: u64,
         recv_us: i64,
     ) -> TransactionWithSlot {
-        GLOBAL_SHRED_POOL_MANAGER.create_transaction_with_slot_optimized(
-            transaction, 
-            slot, 
-            recv_us
-        )
+        GLOBAL_SHRED_POOL_MANAGER.create_transaction_with_slot_optimized(transaction, slot, recv_us)
     }
 }

@@ -1,8 +1,6 @@
 use crate::streaming::event_parser::common::EventMetadata;
+use crate::streaming::event_parser::protocols::raydium_clmm::types::AmmConfig;
 use crate::streaming::event_parser::protocols::raydium_clmm::types::{PoolState, TickArrayState};
-use crate::{
-    streaming::event_parser::protocols::raydium_clmm::types::AmmConfig,
-};
 use serde::{Deserialize, Serialize};
 use solana_sdk::pubkey::Pubkey;
 
@@ -26,7 +24,6 @@ pub struct RaydiumClmmSwapEvent {
     pub tick_array: Pubkey,
     pub remaining_accounts: Vec<Pubkey>,
 }
-
 
 /// 交易v2
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

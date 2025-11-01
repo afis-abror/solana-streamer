@@ -1,5 +1,8 @@
 use solana_streamer_sdk::streaming::{
-    event_parser::{common::{filter::EventTypeFilter, EventType}, DexEvent, Protocol},
+    event_parser::{
+        common::{filter::EventTypeFilter, EventType},
+        DexEvent, Protocol,
+    },
     shred::StreamClientConfig,
     ShrederClient,
 };

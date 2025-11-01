@@ -1,8 +1,8 @@
 use anyhow::Result;
 use solana_commitment_config::CommitmentConfig;
 use solana_streamer_sdk::streaming::event_parser::core::event_parser::EventParser;
-use solana_streamer_sdk::streaming::event_parser::Protocol;
 use solana_streamer_sdk::streaming::event_parser::DexEvent;
+use solana_streamer_sdk::streaming::event_parser::Protocol;
 use std::str::FromStr;
 use std::sync::Arc;
 /// Get transaction data based on transaction signature

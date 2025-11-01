@@ -61,8 +61,8 @@ pub struct StreamClientConfig {
 
 impl Default for StreamClientConfig {
     fn default() -> Self {
-        Self { 
-            connection: ConnectionConfig::default(), 
+        Self {
+            connection: ConnectionConfig::default(),
             enable_metrics: false,
             auto_reconnect: AutoReconnectConfig::default(),
         }

@@ -4,7 +4,7 @@ use crate::streaming::common::{
     SubscriptionHandle,
 };
 use crate::streaming::event_parser::common::filter::EventTypeFilter;
-use crate::streaming::event_parser::{Protocol, DexEvent};
+use crate::streaming::event_parser::{DexEvent, Protocol};
 use crate::streaming::grpc::pool::factory;
 use crate::streaming::grpc::{EventPretty, SubscriptionManager};
 use anyhow::anyhow;

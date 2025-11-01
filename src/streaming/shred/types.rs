@@ -10,11 +10,7 @@ pub struct TransactionWithSlot {
 
 impl TransactionWithSlot {
     /// 创建新的带槽位的交易
-    pub fn new(
-        transaction: VersionedTransaction,
-        slot: u64,
-        recv_us: i64,
-    ) -> Self {
+    pub fn new(transaction: VersionedTransaction, slot: u64, recv_us: i64) -> Self {
         Self { transaction, slot, recv_us }
     }
 }

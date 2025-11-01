@@ -7,7 +7,7 @@ use solana_streamer_sdk::streaming::{
             raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID,
             raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID,
         },
-        Protocol, DexEvent,
+        DexEvent, Protocol,
     },
     grpc::ClientConfig,
     yellowstone_grpc::{AccountFilter, TransactionFilter},

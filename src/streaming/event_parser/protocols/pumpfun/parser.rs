@@ -69,10 +69,7 @@ fn parse_migrate_inner_instruction(data: &[u8], metadata: EventMetadata) -> Opti
 }
 
 /// 解析创建代币日志事件
-fn parse_create_token_inner_instruction(
-    data: &[u8],
-    metadata: EventMetadata,
-) -> Option<DexEvent> {
+fn parse_create_token_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
     if let Some(event) = pumpfun_create_token_event_log_decode(data) {
         Some(DexEvent::PumpFunCreateTokenEvent(PumpFunCreateTokenEvent { metadata, ..event }))
     } else {

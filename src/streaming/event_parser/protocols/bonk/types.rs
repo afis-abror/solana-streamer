@@ -180,10 +180,7 @@ pub fn global_config_decode(data: &[u8]) -> Option<GlobalConfig> {
     borsh::from_slice::<GlobalConfig>(&data[..GLOBAL_CONFIG_SIZE]).ok()
 }
 
-pub fn global_config_parser(
-    account: &AccountPretty,
-    metadata: EventMetadata,
-) -> Option<DexEvent> {
+pub fn global_config_parser(account: &AccountPretty, metadata: EventMetadata) -> Option<DexEvent> {
     if account.data.len() < GLOBAL_CONFIG_SIZE + 8 {
         return None;
     }

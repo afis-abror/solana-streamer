@@ -1,4 +1,7 @@
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use solana_sdk::transaction::VersionedTransaction;
 use tokio::sync::Mutex;
@@ -7,7 +10,6 @@ use tokio::sync::Mutex;
 pub struct TransactionStorage {
     transactions: Arc<Mutex<HashMap<String, VersionedTransaction>>>,
     processed_signatures: Arc<Mutex<HashSet<String>>>,
-
 }
 
 impl TransactionStorage {
@@ -24,7 +26,7 @@ impl TransactionStorage {
 
     pub async fn get(&self, key: &str) -> Option<VersionedTransaction> {
         self.transactions.lock().await.get(key).cloned()
-    }   
+    }
 
     pub async fn remove(&self, key: &str) {
         self.transactions.lock().await.remove(key);

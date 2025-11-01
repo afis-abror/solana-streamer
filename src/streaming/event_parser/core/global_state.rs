@@ -1,8 +1,8 @@
+use dashmap::DashMap;
 use solana_sdk::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use dashmap::DashMap;
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 const MAX_SIGNATURES: usize = 1000;
 const CLEANUP_BATCH_SIZE: usize = 100;
@@ -45,19 +45,22 @@ impl GlobalState {
 
         // Use CAS to ensure only one thread performs cleanup
         let gen = self.generation.load(Ordering::Relaxed);
-        if self.generation.compare_exchange_weak(gen, gen + 1, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        if self
+            .generation
+            .compare_exchange_weak(gen, gen + 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
             return; // Another thread is cleaning up
         }
 
         // Collect signatures to remove (random selection for simplicity)
-        let mut signatures_to_remove: Vec<Signature> = self.signature_data.iter()
-            .map(|entry| *entry.key())
-            .collect();
-        
+        let mut signatures_to_remove: Vec<Signature> =
+            self.signature_data.iter().map(|entry| *entry.key()).collect();
+
         if signatures_to_remove.len() <= MAX_SIGNATURES {
             return; // Race condition, already cleaned up
         }
-        
+
         signatures_to_remove.truncate(CLEANUP_BATCH_SIZE);
 
         // Remove old signatures atomically
@@ -70,8 +73,9 @@ impl GlobalState {
     /// Add developer address for a specific signature (lock-free)
     pub fn add_dev_address(&self, signature: &Signature, address: Pubkey) {
         self.maybe_cleanup();
-        
-        self.signature_data.entry(*signature)
+
+        self.signature_data
+            .entry(*signature)
             .and_modify(|addresses| {
                 addresses.dev_addresses.insert(address);
             })
@@ -86,8 +90,9 @@ impl GlobalState {
     /// Add Bonk developer address for a specific signature (lock-free)
     pub fn add_bonk_dev_address(&self, signature: &Signature, address: Pubkey) {
         self.maybe_cleanup();
-        
-        self.signature_data.entry(*signature)
+
+        self.signature_data
+            .entry(*signature)
             .and_modify(|addresses| {
                 addresses.bonk_dev_addresses.insert(address);
             })
@@ -101,14 +106,20 @@ impl GlobalState {
 
     /// High-performance: Check if address is a developer address in specific signature (O(log m))
     pub fn is_dev_address_in_signature(&self, signature: &Signature, address: &Pubkey) -> bool {
-        self.signature_data.get(signature)
+        self.signature_data
+            .get(signature)
             .map(|entry| entry.dev_addresses.contains(address))
             .unwrap_or(false)
     }
 
     /// High-performance: Check if address is a Bonk developer address in specific signature (O(log m))
-    pub fn is_bonk_dev_address_in_signature(&self, signature: &Signature, address: &Pubkey) -> bool {
-        self.signature_data.get(signature)
+    pub fn is_bonk_dev_address_in_signature(
+        &self,
+        signature: &Signature,
+        address: &Pubkey,
+    ) -> bool {
+        self.signature_data
+            .get(signature)
             .map(|entry| entry.bonk_dev_addresses.contains(address))
             .unwrap_or(false)
     }
@@ -147,14 +158,16 @@ impl GlobalState {
 
     /// Get developer addresses for a specific signature
     pub fn get_dev_addresses_for_signature(&self, signature: &Signature) -> Vec<Pubkey> {
-        self.signature_data.get(signature)
+        self.signature_data
+            .get(signature)
             .map(|entry| entry.dev_addresses.iter().copied().collect())
             .unwrap_or_default()
     }
 
     /// Get Bonk developer addresses for a specific signature
     pub fn get_bonk_dev_addresses_for_signature(&self, signature: &Signature) -> Vec<Pubkey> {
-        self.signature_data.get(signature)
+        self.signature_data
+            .get(signature)
             .map(|entry| entry.bonk_dev_addresses.iter().copied().collect())
             .unwrap_or_default()
     }

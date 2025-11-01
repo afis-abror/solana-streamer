@@ -31,10 +31,7 @@ pub fn bonding_curve_decode(data: &[u8]) -> Option<BondingCurve> {
     borsh::from_slice::<BondingCurve>(&data[..BONDING_CURVE_SIZE]).ok()
 }
 
-pub fn bonding_curve_parser(
-    account: &AccountPretty,
-    metadata: EventMetadata,
-) -> Option<DexEvent> {
+pub fn bonding_curve_parser(account: &AccountPretty, metadata: EventMetadata) -> Option<DexEvent> {
     if account.data.len() < BONDING_CURVE_SIZE + 8 {
         return None;
     }

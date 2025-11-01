@@ -1,35 +1,35 @@
+use crate::common::AnyResult;
+use crate::protos::shreder;
+use crate::protos::shreder::{
+    shreder_service_client::ShrederServiceClient, SubscribeRequestFilterTransactions,
+    SubscribeTransactionsRequest,
+};
+use crate::streaming::common::{
+    process_shred_transaction, MetricsManager, StreamClientConfig, SubscriptionHandle,
+};
+use crate::streaming::event_parser::common::filter::EventTypeFilter;
+use crate::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
+use crate::streaming::event_parser::{DexEvent, Protocol};
+use crate::streaming::shred::factory;
+use crate::streaming::storage::TransactionStorage;
+use anyhow;
+use futures::SinkExt;
+use log::{error, info, warn};
+use solana_sdk::{
+    hash::Hash,
+    message::compiled_instruction::CompiledInstruction,
+    message::{Message, MessageHeader, VersionedMessage},
+    pubkey::Pubkey,
+    signature::Signature,
+    transaction::VersionedTransaction,
+};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
-use futures::SinkExt;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
 use tonic::transport::{Channel, Endpoint};
-use anyhow;
-use crate::protos::shreder;
-use crate::protos::shreder::{
-    shreder_service_client::ShrederServiceClient,
-    SubscribeRequestFilterTransactions, 
-    SubscribeTransactionsRequest,
-};
-use crate::streaming::storage::TransactionStorage;
-use log::{error, warn, info};
-use crate::common::AnyResult;
-use crate::streaming::common::{process_shred_transaction, MetricsManager, StreamClientConfig, SubscriptionHandle};
-use crate::streaming::event_parser::common::high_performance_clock::get_high_perf_clock;
-use crate::streaming::event_parser::{DexEvent, Protocol};
-use crate::streaming::event_parser::common::filter::EventTypeFilter;
-use crate::streaming::shred::factory;
-use solana_sdk::{
-    message::{Message, MessageHeader, VersionedMessage},
-    transaction::VersionedTransaction,
-    signature::Signature,
-    pubkey::Pubkey,
-    hash::Hash,
-    message::compiled_instruction::CompiledInstruction,
-};
-
 
 /// Shreder gRPC streaming client for transaction subscriptions
 #[derive(Clone)]
@@ -52,10 +52,19 @@ impl ShrederClient {
     }
 
     pub async fn new_with_local_addr(endpoint: String, local_addr: IpAddr) -> AnyResult<Self> {
-        Self::new_with_config_and_local_addr(endpoint, StreamClientConfig::default(), Some(local_addr)).await
+        Self::new_with_config_and_local_addr(
+            endpoint,
+            StreamClientConfig::default(),
+            Some(local_addr),
+        )
+        .await
     }
 
-    pub async fn new_with_config_and_local_addr(endpoint: String, config: StreamClientConfig, local_addr: Option<IpAddr>) -> AnyResult<Self> {
+    pub async fn new_with_config_and_local_addr(
+        endpoint: String,
+        config: StreamClientConfig,
+        local_addr: Option<IpAddr>,
+    ) -> AnyResult<Self> {
         let shredstream_client = Self::create_client(&endpoint, local_addr.as_ref()).await?;
         MetricsManager::init(config.enable_metrics);
         Ok(Self {
@@ -68,11 +77,20 @@ impl ShrederClient {
         })
     }
 
-    pub async fn new_with_storage(endpoint: String, config: StreamClientConfig, storage: Arc<TransactionStorage>) -> AnyResult<Self> {
+    pub async fn new_with_storage(
+        endpoint: String,
+        config: StreamClientConfig,
+        storage: Arc<TransactionStorage>,
+    ) -> AnyResult<Self> {
         Self::new_with_storage_and_local_addr(endpoint, config, storage, None).await
     }
 
-    pub async fn new_with_storage_and_local_addr(endpoint: String, config: StreamClientConfig, storage: Arc<TransactionStorage>, local_addr: Option<IpAddr>) -> AnyResult<Self> {
+    pub async fn new_with_storage_and_local_addr(
+        endpoint: String,
+        config: StreamClientConfig,
+        storage: Arc<TransactionStorage>,
+        local_addr: Option<IpAddr>,
+    ) -> AnyResult<Self> {
         let shredstream_client = Self::create_client(&endpoint, local_addr.as_ref()).await?;
         MetricsManager::init(config.enable_metrics);
         Ok(Self {
@@ -85,10 +103,13 @@ impl ShrederClient {
         })
     }
 
-    async fn create_client(endpoint: &str, local_addr: Option<&IpAddr>) -> AnyResult<ShrederServiceClient<Channel>> {
+    async fn create_client(
+        endpoint: &str,
+        local_addr: Option<&IpAddr>,
+    ) -> AnyResult<ShrederServiceClient<Channel>> {
         if let Some(addr) = local_addr {
             let addr_owned = *addr;
-            
+
             // Use connect_with_connector but do the binding properly
             let channel = Endpoint::from_shared(endpoint.to_string())?
                 .connect_with_connector(tower::service_fn(move |uri: tonic::transport::Uri| {
@@ -97,52 +118,55 @@ impl ShrederClient {
                             std::io::Error::new(std::io::ErrorKind::InvalidInput, "Missing host")
                         })?;
                         let port = uri.port_u16().unwrap_or(50051);
-                        
+
                         // Resolve the hostname to IP
-                        let remote_addr: SocketAddr = tokio::net::lookup_host(format!("{}:{}", host, port))
-                            .await?
-                            .next()
-                            .ok_or_else(|| std::io::Error::new(
-                                std::io::ErrorKind::NotFound, 
-                                "Could not resolve hostname"
-                            ))?;
-                        
+                        let remote_addr: SocketAddr =
+                            tokio::net::lookup_host(format!("{}:{}", host, port))
+                                .await?
+                                .next()
+                                .ok_or_else(|| {
+                                    std::io::Error::new(
+                                        std::io::ErrorKind::NotFound,
+                                        "Could not resolve hostname",
+                                    )
+                                })?;
+
                         // Create socket with the appropriate domain
-                        let domain = if remote_addr.is_ipv4() { 
-                            socket2::Domain::IPV4 
-                        } else { 
-                            socket2::Domain::IPV6 
+                        let domain = if remote_addr.is_ipv4() {
+                            socket2::Domain::IPV4
+                        } else {
+                            socket2::Domain::IPV6
                         };
-                        
+
                         let socket = socket2::Socket::new(
                             domain,
                             socket2::Type::STREAM,
                             Some(socket2::Protocol::TCP),
                         )?;
-                        
+
                         socket.set_reuse_address(true)?;
                         socket.set_nodelay(true)?;
-                        
+
                         // Bind to local address with port 0 (let OS choose)
                         let bind_addr = SocketAddr::new(addr_owned, 0);
                         socket.bind(&bind_addr.into())?;
-                        
+
                         // Connect in blocking mode first
                         socket.connect(&remote_addr.into())?;
-                        
+
                         // Convert to std stream and set non-blocking
                         let std_stream: std::net::TcpStream = socket.into();
                         std_stream.set_nonblocking(true)?;
-                        
+
                         // Convert to tokio stream
                         let tokio_stream = tokio::net::TcpStream::from_std(std_stream)?;
-                        
+
                         // Wrap with hyper_util::rt::TokioIo
                         Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(tokio_stream))
                     }
                 }))
                 .await?;
-            
+
             Ok(ShrederServiceClient::new(channel))
         } else {
             // No local address specified, use default connection
@@ -180,19 +204,18 @@ impl ShrederClient {
         let mut transaction_filters = HashMap::new();
         for protocol in &protocols {
             let program_ids = protocol.get_program_id();
-            let program_id_strings: Vec<String> = program_ids.iter()
-                .map(|pubkey| pubkey.to_string())
-                .collect();
-            
+            let program_id_strings: Vec<String> =
+                program_ids.iter().map(|pubkey| pubkey.to_string()).collect();
+
             let filter_name = match protocol {
                 Protocol::PumpFun => "pumpfun",
-                Protocol::PumpSwap => "pumpswap", 
+                Protocol::PumpSwap => "pumpswap",
                 Protocol::RaydiumAmmV4 => "raydium_amm_v4",
                 Protocol::RaydiumClmm => "raydium_clmm",
                 Protocol::RaydiumCpmm => "raydium_cpmm",
                 Protocol::Bonk => "bonk",
             };
-            
+
             transaction_filters.insert(
                 filter_name.to_owned(),
                 SubscribeRequestFilterTransactions {
@@ -203,11 +226,11 @@ impl ShrederClient {
             );
         }
 
-        let request = SubscribeTransactionsRequest {transactions: transaction_filters};
+        let request = SubscribeTransactionsRequest { transactions: transaction_filters };
 
         let stream_task = tokio::spawn(async move {
             let mut retry_attempt = 0u32;
-            
+
             loop {
                 // Try to establish connection
                 let client = if retry_attempt == 0 {
@@ -225,33 +248,42 @@ impl ShrederClient {
                     }
                 } else {
                     // Reconnection attempt
-                    if auto_reconnect_config.max_retries > 0 && retry_attempt > auto_reconnect_config.max_retries {
-                        error!("Max reconnection attempts ({}) exceeded", auto_reconnect_config.max_retries);
+                    if auto_reconnect_config.max_retries > 0
+                        && retry_attempt > auto_reconnect_config.max_retries
+                    {
+                        error!(
+                            "Max reconnection attempts ({}) exceeded",
+                            auto_reconnect_config.max_retries
+                        );
                         break;
                     }
 
                     let delay_ms = std::cmp::min(
-                        (auto_reconnect_config.initial_delay_ms as f64 
-                            * auto_reconnect_config.backoff_multiplier.powi((retry_attempt - 1) as i32)) as u64,
-                        auto_reconnect_config.max_delay_ms
+                        (auto_reconnect_config.initial_delay_ms as f64
+                            * auto_reconnect_config
+                                .backoff_multiplier
+                                .powi((retry_attempt - 1) as i32)) as u64,
+                        auto_reconnect_config.max_delay_ms,
                     );
-                    
+
                     warn!("Reconnecting in {}ms (attempt {})...", delay_ms, retry_attempt);
                     sleep(Duration::from_millis(delay_ms)).await;
-                    
+
                     match timeout(
                         Duration::from_secs(connection_config.connect_timeout),
-                        Self::create_client(&endpoint, local_addr.as_ref())
-                    ).await {
+                        Self::create_client(&endpoint, local_addr.as_ref()),
+                    )
+                    .await
+                    {
                         Ok(Ok(client)) => {
                             info!("Successfully reconnected to shreder service");
                             client
-                        },
+                        }
                         Ok(Err(e)) => {
                             error!("Failed to reconnect: {:?}", e);
                             retry_attempt += 1;
                             continue;
-                        },
+                        }
                         Err(_) => {
                             error!("Connection timeout during reconnect");
                             retry_attempt += 1;
@@ -261,13 +293,15 @@ impl ShrederClient {
                 };
 
                 let mut client = client;
-                let (mut subscribe_tx, subscribe_rx) = futures::channel::mpsc::unbounded::<SubscribeTransactionsRequest>();
-                
+                let (mut subscribe_tx, subscribe_rx) =
+                    futures::channel::mpsc::unbounded::<SubscribeTransactionsRequest>();
+
                 // Attempt to create stream
                 let stream_result = timeout(
                     Duration::from_secs(connection_config.request_timeout),
-                    client.subscribe_transactions(subscribe_rx)
-                ).await;
+                    client.subscribe_transactions(subscribe_rx),
+                )
+                .await;
 
                 let mut stream = match stream_result {
                     Ok(Ok(response)) => response.into_inner(),
@@ -278,7 +312,7 @@ impl ShrederClient {
                         }
                         retry_attempt += 1;
                         continue;
-                    },
+                    }
                     Err(_) => {
                         error!("Timeout creating subscription stream");
                         if !auto_reconnect_config.enabled {
@@ -307,13 +341,17 @@ impl ShrederClient {
                     match stream.message().await {
                         Ok(Some(message)) => {
                             let receive_us = get_high_perf_clock();
-                            if let Some(transaction_update) = &message.transaction {                                
+                            if let Some(transaction_update) = &message.transaction {
                                 if let Some(shreder_tx) = transaction_update.transaction.as_ref() {
-                                    let versioned_tx = convert_shreder_to_versioned_transaction(shreder_tx);
+                                    let versioned_tx =
+                                        convert_shreder_to_versioned_transaction(shreder_tx);
                                     let versioned_tx = match versioned_tx {
                                         Ok(vtx) => vtx,
                                         Err(e) => {
-                                            error!("Failed to convert Shreder transaction: {:?}", e);
+                                            error!(
+                                                "Failed to convert Shreder transaction: {:?}",
+                                                e
+                                            );
                                             continue;
                                         }
                                     };
@@ -322,12 +360,18 @@ impl ShrederClient {
                                         continue;
                                     }
 
-                                    transactions.insert(versioned_tx.signatures[0].to_string(), versioned_tx.clone()).await;
-                                    let transaction_with_slot = factory::create_transaction_with_slot_pooled(
-                                        versioned_tx,
-                                        transaction_update.slot,
-                                        receive_us,
-                                    );
+                                    transactions
+                                        .insert(
+                                            versioned_tx.signatures[0].to_string(),
+                                            versioned_tx.clone(),
+                                        )
+                                        .await;
+                                    let transaction_with_slot =
+                                        factory::create_transaction_with_slot_pooled(
+                                            versioned_tx,
+                                            transaction_update.slot,
+                                            receive_us,
+                                        );
 
                                     if let Err(e) = process_shred_transaction(
                                         transaction_with_slot,
@@ -340,24 +384,27 @@ impl ShrederClient {
                                     {
                                         error!("Error handling message: {e:?}");
                                     }
-                                } 
+                                }
                             } else {
                                 warn!("Received message without transaction data");
                             }
-                        },
+                        }
                         Ok(None) => {
                             warn!("Stream ended unexpectedly");
                             break true; // Stream ended, need to reconnect
-                        },
+                        }
                         Err(e) => {
                             error!("Stream error: {:?}", e);
                             // Check if this is a connection error that warrants reconnection
                             let error_str = e.to_string().to_lowercase();
-                            if error_str.contains("broken pipe") 
-                                || error_str.contains("connection") 
+                            if error_str.contains("broken pipe")
+                                || error_str.contains("connection")
                                 || error_str.contains("h2 protocol error")
-                                || error_str.contains("stream closed") {
-                                warn!("Connection-related error detected, will attempt to reconnect");
+                                || error_str.contains("stream closed")
+                            {
+                                warn!(
+                                    "Connection-related error detected, will attempt to reconnect"
+                                );
                                 break true; // Connection error, need to reconnect
                             } else {
                                 error!("Non-recoverable stream error: {:?}", e);
@@ -374,7 +421,7 @@ impl ShrederClient {
                 retry_attempt += 1;
                 warn!("Stream connection lost, preparing to reconnect...");
             }
-            
+
             info!("Shreder stream task ended");
         });
 
@@ -384,9 +431,7 @@ impl ShrederClient {
 
         Ok(())
     }
-    
 
-    
     /// Stop the streaming
     pub async fn stop(&self) {
         let mut handle_guard = self.subscription_handle.lock().await;
@@ -396,8 +441,9 @@ impl ShrederClient {
     }
 }
 
-fn convert_shreder_to_versioned_transaction(shreder_tx: &shreder::Transaction) -> AnyResult<solana_sdk::transaction::VersionedTransaction> {
-
+fn convert_shreder_to_versioned_transaction(
+    shreder_tx: &shreder::Transaction,
+) -> AnyResult<solana_sdk::transaction::VersionedTransaction> {
     // Convert signatures
     let mut signatures = Vec::new();
     for sig_bytes in shreder_tx.signatures.clone() {
@@ -410,15 +456,14 @@ fn convert_shreder_to_versioned_transaction(shreder_tx: &shreder::Transaction) -
     }
 
     // Extract message
-    let shreder_msg = shreder_tx.message.clone().ok_or_else(|| {
-        anyhow::anyhow!("Missing message in transaction")
-    })?;
+    let shreder_msg = shreder_tx
+        .message
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("Missing message in transaction"))?;
 
     // Convert message header
-    let header = shreder_msg.header.ok_or_else(|| {
-        anyhow::anyhow!("Missing header in message")
-    })?;
-    
+    let header = shreder_msg.header.ok_or_else(|| anyhow::anyhow!("Missing header in message"))?;
+
     let message_header = MessageHeader {
         num_required_signatures: header.num_required_signatures as u8,
         num_readonly_signed_accounts: header.num_readonly_signed_accounts as u8,
@@ -436,7 +481,10 @@ fn convert_shreder_to_versioned_transaction(shreder_tx: &shreder::Transaction) -
 
     // Convert recent blockhash
     if shreder_msg.recent_blockhash.len() != 32 {
-        return Err(anyhow::anyhow!("Invalid blockhash length: {}", shreder_msg.recent_blockhash.len()));
+        return Err(anyhow::anyhow!(
+            "Invalid blockhash length: {}",
+            shreder_msg.recent_blockhash.len()
+        ));
     }
     let mut hash_array = [0u8; 32];
     hash_array.copy_from_slice(&shreder_msg.recent_blockhash);
@@ -457,7 +505,7 @@ fn convert_shreder_to_versioned_transaction(shreder_tx: &shreder::Transaction) -
     let versioned_message = if shreder_msg.versioned {
         // For V0 messages with address table lookups
         use solana_sdk::message::v0;
-        
+
         let mut address_table_lookups = Vec::new();
         for lookup in shreder_msg.address_table_lookups {
             if lookup.account_key.len() != 32 {
@@ -483,17 +531,10 @@ fn convert_shreder_to_versioned_transaction(shreder_tx: &shreder::Transaction) -
         VersionedMessage::V0(v0_message)
     } else {
         // Legacy message
-        let legacy_message = Message {
-            header: message_header,
-            account_keys,
-            recent_blockhash,
-            instructions,
-        };
+        let legacy_message =
+            Message { header: message_header, account_keys, recent_blockhash, instructions };
         VersionedMessage::Legacy(legacy_message)
     };
 
-    Ok(VersionedTransaction {
-        signatures,
-        message: versioned_message,
-    })
+    Ok(VersionedTransaction { signatures, message: versioned_message })
 }

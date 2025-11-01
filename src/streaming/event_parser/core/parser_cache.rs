@@ -14,14 +14,13 @@ use crate::streaming::{
     event_parser::{
         common::{filter::EventTypeFilter, EventMetadata, EventType, ProtocolType},
         protocols::{
-            bonk::parser::BONK_PROGRAM_ID,
-            pumpfun::parser::PUMPFUN_PROGRAM_ID,
+            bonk::parser::BONK_PROGRAM_ID, pumpfun::parser::PUMPFUN_PROGRAM_ID,
             pumpswap::parser::PUMPSWAP_PROGRAM_ID,
             raydium_amm_v4::parser::RAYDIUM_AMM_V4_PROGRAM_ID,
             raydium_clmm::parser::RAYDIUM_CLMM_PROGRAM_ID,
             raydium_cpmm::parser::RAYDIUM_CPMM_PROGRAM_ID,
         },
-        Protocol, DexEvent,
+        DexEvent, Protocol,
     },
     grpc::AccountPretty,
 };
@@ -38,8 +37,7 @@ use std::{
 /// 内联指令事件解析器函数类型
 ///
 /// 用于解析内联指令（Inner Instruction）生成的事件
-pub type InnerInstructionEventParser =
-    fn(data: &[u8], metadata: EventMetadata) -> Option<DexEvent>;
+pub type InnerInstructionEventParser = fn(data: &[u8], metadata: EventMetadata) -> Option<DexEvent>;
 
 /// 指令事件解析器函数类型
 ///
@@ -280,9 +278,7 @@ impl AccountPubkeyCache {
     ///
     /// 预分配32个位置，覆盖大多数交易场景
     pub fn new() -> Self {
-        Self {
-            cache: Vec::with_capacity(32),
-        }
+        Self { cache: Vec::with_capacity(32) }
     }
 
     /// 从指令账户索引构建账户公钥向量

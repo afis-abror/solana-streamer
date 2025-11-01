@@ -110,10 +110,7 @@ pub const CONFIGS: &[GenericEventParseConfig] = &[
     },
 ];
 /// Parse pool creation event
-fn parse_pool_create_inner_instruction(
-    data: &[u8],
-    metadata: EventMetadata,
-) -> Option<DexEvent> {
+fn parse_pool_create_inner_instruction(data: &[u8], metadata: EventMetadata) -> Option<DexEvent> {
     if let Some(event) = bonk_pool_create_event_log_decode(data) {
         Some(DexEvent::BonkPoolCreateEvent(BonkPoolCreateEvent { metadata, ..event }))
     } else {
