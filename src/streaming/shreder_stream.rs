@@ -31,6 +31,86 @@ use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
 use tonic::transport::{Channel, Endpoint};
 
+/// Comprehensive transaction age metrics
+#[derive(Debug, Clone)]
+pub struct TransactionAgeMetrics {
+    /// When the transaction was received (UTC)
+    pub received_at: chrono::DateTime<chrono::Utc>,
+    /// Transaction receive timestamp (high-perf clock, microseconds)
+    pub receive_timestamp_us: i64,
+    /// When Shreder created/sent the transaction (for reference only)
+    pub shreder_created_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Observed delay between Shreder timestamp and receive time
+    /// WARNING: This includes clock drift and may not reflect actual network latency
+    pub observed_delay_us: i64,
+    /// Transaction slot number
+    pub slot: u64,
+    /// Recent blockhash from the transaction
+    pub recent_blockhash: Hash,
+}
+
+impl TransactionAgeMetrics {
+    /// Calculate estimated age based on slot difference
+    /// Assumes ~400ms per slot (Solana average)
+    pub fn estimate_age_from_slot(&self, current_slot: u64) -> Duration {
+        if current_slot >= self.slot {
+            let slot_diff = current_slot - self.slot;
+            Duration::from_millis(slot_diff * 400)
+        } else {
+            Duration::from_millis(0)
+        }
+    }
+
+    /// Calculate time elapsed since this transaction was received (microseconds)
+    pub fn elapsed_since_received(&self) -> i64 {
+        let now = get_high_perf_clock();
+        now - self.receive_timestamp_us
+    }
+
+    /// Pretty print for logging
+    pub fn to_log_string(&self, current_slot: Option<u64>) -> String {
+        let mut parts = vec![];
+
+        // Show observed delay with clear warning about clock drift
+        let delay_abs = self.observed_delay_us.abs();
+        if self.observed_delay_us < 0 {
+            // Negative = clock drift (our clock is behind)
+            parts.push(format!("delay=<{}μs⚠️", delay_abs));
+        } else if delay_abs < 10000 {
+            // Reasonable value (< 10ms)
+            parts.push(format!("delay=~{}μs", delay_abs));
+        } else {
+            // Suspiciously large
+            parts.push(format!("delay={}μs❓", delay_abs));
+        }
+        
+        // Debug mode shows more detail
+        if std::env::var("SHOW_SHRED_DELAY_DETAIL")
+            .map(|v| v.to_lowercase() == "true")
+            .unwrap_or(false)
+        {
+            parts.push(format!("recv={}", self.received_at.format("%H:%M:%S%.6f")));
+            if let Some(created) = self.shreder_created_at {
+                parts.push(format!("shred={}", created.format("%H:%M:%S%.6f")));
+            }
+            parts.push(format!("raw={}μs", self.observed_delay_us));
+        }
+
+        parts.push(format!("slot={}", self.slot));
+
+        if let Some(curr_slot) = current_slot {
+            let age = self.estimate_age_from_slot(curr_slot);
+            if age.as_millis() > 0 {
+                parts.push(format!("age={}ms", age.as_millis()));
+            }
+        }
+
+        parts.push(format!("hash={:.8}", self.recent_blockhash.to_string()));
+
+        parts.join(", ")
+    }
+}
+
 /// Shreder gRPC streaming client for transaction subscriptions
 #[derive(Clone)]
 pub struct ShrederClient {
@@ -340,7 +420,23 @@ impl ShrederClient {
                 let stream_broken = loop {
                     match stream.message().await {
                         Ok(Some(message)) => {
+                            // Capture receive time IMMEDIATELY with high-perf clock
                             let receive_us = get_high_perf_clock();
+                            
+                            // Also capture UTC for display
+                            let now_utc = chrono::Utc::now();
+                            
+                            let shreder_created_at = message.created_at.as_ref().and_then(|ts| {
+                                chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
+                            });
+                            
+                            // Calculate observed delay (includes clock drift)
+                            let observed_delay_us = if let Some(created) = shreder_created_at {
+                                let shreder_us = created.timestamp_micros();
+                                receive_us - shreder_us
+                            } else {
+                                0
+                            };
                             if let Some(transaction_update) = &message.transaction {
                                 if let Some(shreder_tx) = transaction_update.transaction.as_ref() {
                                     let versioned_tx =
@@ -358,6 +454,25 @@ impl ShrederClient {
 
                                     if versioned_tx.signatures.is_empty() {
                                         continue;
+                                    }
+
+                                    // Build comprehensive age metrics
+                                    let age_metrics = TransactionAgeMetrics {
+                                        received_at: now_utc,
+                                        receive_timestamp_us: receive_us,
+                                        shreder_created_at,
+                                        observed_delay_us,
+                                        slot: transaction_update.slot,
+                                        recent_blockhash: *versioned_tx.message.recent_blockhash(),
+                                    };
+
+                                    // Show metrics only if SHOW_SHRED_DELAY=true
+                                    if std::env::var("SHOW_SHRED_DELAY")
+                                        .map(|v| v.to_lowercase() == "true")
+                                        .unwrap_or(false)
+                                    {
+                                        // Can optionally pass current_slot if you track it
+                                        println!("[TX AGE METRICS] {}", age_metrics.to_log_string(None));
                                     }
 
                                     transactions
@@ -438,6 +553,11 @@ impl ShrederClient {
         if let Some(handle) = handle_guard.take() {
             handle.stop();
         }
+    }
+
+    /// Get transaction from storage
+    pub async fn get_transaction(&self, signature: &str) -> Option<VersionedTransaction> {
+        self.transactions.get(signature).await
     }
 }
 
