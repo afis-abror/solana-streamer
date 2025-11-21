@@ -4,6 +4,7 @@ use crate::protos::shreder::{
     shreder_service_client::ShrederServiceClient, SubscribeRequestFilterTransactions,
     SubscribeTransactionsRequest,
 };
+use crate::streaming::blocktime::BlockTimeCache;
 use crate::streaming::common::{
     process_shred_transaction, MetricsManager, StreamClientConfig, SubscriptionHandle,
 };
@@ -13,6 +14,7 @@ use crate::streaming::event_parser::{DexEvent, Protocol};
 use crate::streaming::shred::factory;
 use crate::streaming::storage::TransactionStorage;
 use anyhow;
+use chrono::{DateTime, Utc};
 use futures::SinkExt;
 use log::{error, info, warn};
 use solana_sdk::{
@@ -49,68 +51,6 @@ pub struct TransactionAgeMetrics {
     pub recent_blockhash: Hash,
 }
 
-impl TransactionAgeMetrics {
-    /// Calculate estimated age based on slot difference
-    /// Assumes ~400ms per slot (Solana average)
-    pub fn estimate_age_from_slot(&self, current_slot: u64) -> Duration {
-        if current_slot >= self.slot {
-            let slot_diff = current_slot - self.slot;
-            Duration::from_millis(slot_diff * 400)
-        } else {
-            Duration::from_millis(0)
-        }
-    }
-
-    /// Calculate time elapsed since this transaction was received (microseconds)
-    pub fn elapsed_since_received(&self) -> i64 {
-        let now = get_high_perf_clock();
-        now - self.receive_timestamp_us
-    }
-
-    /// Pretty print for logging
-    pub fn to_log_string(&self, current_slot: Option<u64>) -> String {
-        let mut parts = vec![];
-
-        // Show observed delay with clear warning about clock drift
-        let delay_abs = self.observed_delay_us.abs();
-        if self.observed_delay_us < 0 {
-            // Negative = clock drift (our clock is behind)
-            parts.push(format!("delay=<{}μs⚠️", delay_abs));
-        } else if delay_abs < 10000 {
-            // Reasonable value (< 10ms)
-            parts.push(format!("delay=~{}μs", delay_abs));
-        } else {
-            // Suspiciously large
-            parts.push(format!("delay={}μs❓", delay_abs));
-        }
-        
-        // Debug mode shows more detail
-        if std::env::var("SHOW_SHRED_DELAY_DETAIL")
-            .map(|v| v.to_lowercase() == "true")
-            .unwrap_or(false)
-        {
-            parts.push(format!("recv={}", self.received_at.format("%H:%M:%S%.6f")));
-            if let Some(created) = self.shreder_created_at {
-                parts.push(format!("shred={}", created.format("%H:%M:%S%.6f")));
-            }
-            parts.push(format!("raw={}μs", self.observed_delay_us));
-        }
-
-        parts.push(format!("slot={}", self.slot));
-
-        if let Some(curr_slot) = current_slot {
-            let age = self.estimate_age_from_slot(curr_slot);
-            if age.as_millis() > 0 {
-                parts.push(format!("age={}ms", age.as_millis()));
-            }
-        }
-
-        parts.push(format!("hash={:.8}", self.recent_blockhash.to_string()));
-
-        parts.join(", ")
-    }
-}
-
 /// Shreder gRPC streaming client for transaction subscriptions
 #[derive(Clone)]
 pub struct ShrederClient {
@@ -120,6 +60,9 @@ pub struct ShrederClient {
     pub transactions: Arc<TransactionStorage>,
     pub endpoint: String,
     pub local_addr: Option<IpAddr>,
+    pub block_time_cache: Option<BlockTimeCache>,
+    pub transactions_by_slot: Arc<Mutex<HashMap<u64, Vec<(String, DateTime<Utc>)>>>>,
+    pub rpc_endpoint: Option<String>,
 }
 
 impl ShrederClient {
@@ -154,6 +97,9 @@ impl ShrederClient {
             transactions: Arc::new(TransactionStorage::new()),
             endpoint,
             local_addr,
+            block_time_cache: None,
+            transactions_by_slot: Arc::new(Mutex::new(HashMap::new())),
+            rpc_endpoint: None,
         })
     }
 
@@ -180,7 +126,16 @@ impl ShrederClient {
             transactions: storage,
             endpoint,
             local_addr,
+            block_time_cache: None,
+            transactions_by_slot: Arc::new(Mutex::new(HashMap::new())),
+            rpc_endpoint: None,
         })
+    }
+
+    /// Enable latency monitoring with RPC endpoint
+    pub fn enable_latency_monitoring(&mut self, rpc_endpoint: String) {
+        self.rpc_endpoint = Some(rpc_endpoint.clone());
+        self.block_time_cache = Some(BlockTimeCache::new(&rpc_endpoint));
     }
 
     async fn create_client(
@@ -279,6 +234,18 @@ impl ShrederClient {
         let protocols_clone = protocols.clone();
         let callback = Arc::new(callback);
         let transactions = self.transactions.clone();
+        let transactions_by_slot = self.transactions_by_slot.clone();
+        let block_time_cache = self.block_time_cache.clone();
+
+        // Start latency monitoring task if enabled
+        let latency_handle = if let Some(cache) = block_time_cache.clone() {
+            let transactions_by_slot_clone = transactions_by_slot.clone();
+            Some(tokio::spawn(async move {
+                crate::streaming::blocktime::latency_monitor_task(cache, transactions_by_slot_clone).await;
+            }))
+        } else {
+            None
+        };
 
         // Create the subscription request
         let mut transaction_filters = HashMap::new();
@@ -423,21 +390,18 @@ impl ShrederClient {
                             // Capture receive time IMMEDIATELY with high-perf clock
                             let receive_us = get_high_perf_clock();
                             
-                            // Also capture UTC for display
-                            let now_utc = chrono::Utc::now();
-                            
-                            let shreder_created_at = message.created_at.as_ref().and_then(|ts| {
-                                chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
-                            });
-                            
-                            // Calculate observed delay (includes clock drift)
-                            let observed_delay_us = if let Some(created) = shreder_created_at {
-                                let shreder_us = created.timestamp_micros();
-                                receive_us - shreder_us
-                            } else {
-                                0
-                            };
                             if let Some(transaction_update) = &message.transaction {
+                                let slot = transaction_update.slot;
+                                
+                                // Prepare log message for latency monitoring
+                                if block_time_cache.is_some() {
+                                    crate::streaming::blocktime::prepare_log_message(
+                                        slot,
+                                        &transactions_by_slot,
+                                    )
+                                    .await;
+                                }
+                                
                                 if let Some(shreder_tx) = transaction_update.transaction.as_ref() {
                                     let versioned_tx =
                                         convert_shreder_to_versioned_transaction(shreder_tx);
@@ -456,24 +420,6 @@ impl ShrederClient {
                                         continue;
                                     }
 
-                                    // Build comprehensive age metrics
-                                    let age_metrics = TransactionAgeMetrics {
-                                        received_at: now_utc,
-                                        receive_timestamp_us: receive_us,
-                                        shreder_created_at,
-                                        observed_delay_us,
-                                        slot: transaction_update.slot,
-                                        recent_blockhash: *versioned_tx.message.recent_blockhash(),
-                                    };
-
-                                    // Show metrics only if SHOW_SHRED_DELAY=true
-                                    if std::env::var("SHOW_SHRED_DELAY")
-                                        .map(|v| v.to_lowercase() == "true")
-                                        .unwrap_or(false)
-                                    {
-                                        // Can optionally pass current_slot if you track it
-                                        println!("[TX AGE METRICS] {}", age_metrics.to_log_string(None));
-                                    }
 
                                     transactions
                                         .insert(
@@ -538,6 +484,11 @@ impl ShrederClient {
             }
 
             info!("Shreder stream task ended");
+            
+            // Abort latency monitoring task if it exists
+            if let Some(handle) = latency_handle {
+                handle.abort();
+            }
         });
 
         let subscription_handle = SubscriptionHandle::new(stream_task, None, metrics_handle);

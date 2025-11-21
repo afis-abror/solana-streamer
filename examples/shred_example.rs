@@ -19,7 +19,7 @@ async fn test_shreds() -> Result<(), Box<dyn std::error::Error>> {
     // Enable performance monitoring, has performance overhead, disabled by default
     config.enable_metrics = true;
     let shred_stream =
-        ShredStreamGrpc::new_with_config("http://127.0.0.1:10800".to_string(), config).await?;
+        ShredStreamGrpc::new_with_config("http://127.0.0.1:9999".to_string(), config).await?;
 
     let callback = create_event_callback();
     let protocols = vec![

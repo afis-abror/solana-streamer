@@ -153,7 +153,7 @@ fn parse_buy_instruction(
     accounts: &[Pubkey],
     metadata: EventMetadata,
 ) -> Option<DexEvent> {
-    if data.len() < 16 || accounts.len() < 13 {
+    if data.len() < 16 || accounts.len() < 14 {
         return None;
     }
     let amount = u64::from_le_bytes(data[0..8].try_into().unwrap());
