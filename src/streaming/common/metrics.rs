@@ -40,6 +40,8 @@ struct AtomicEventMetrics {
     window_start_nanos: AtomicU64,
     // Processing time statistics per event type
     processing_stats: AtomicProcessingTimeStats,
+    // Network latency statistics
+    latency_stats: AtomicProcessingTimeStats,
 }
 
 impl AtomicEventMetrics {
@@ -50,6 +52,7 @@ impl AtomicEventMetrics {
             events_in_window: AtomicU64::new(0),
             window_start_nanos: AtomicU64::new(0),
             processing_stats: AtomicProcessingTimeStats::new_const(),
+            latency_stats: AtomicProcessingTimeStats::new_const(),
         }
     }
 
@@ -98,6 +101,18 @@ impl AtomicEventMetrics {
     #[inline]
     fn update_processing_stats(&self, time_us: f64, event_count: u64) {
         self.processing_stats.update(time_us, event_count);
+    }
+
+    /// Get latency statistics for this event type
+    #[inline]
+    fn get_latency_stats(&self) -> ProcessingTimeStats {
+        self.latency_stats.get_stats()
+    }
+
+    /// Update latency statistics for this event type
+    #[inline]
+    fn update_latency_stats(&self, latency_us: f64, event_count: u64) {
+        self.latency_stats.update(latency_us, event_count);
     }
 }
 
@@ -160,6 +175,7 @@ pub struct EventMetricsSnapshot {
     pub process_count: u64,
     pub events_processed: u64,
     pub processing_stats: ProcessingTimeStats,
+    pub latency_stats: ProcessingTimeStats,
 }
 
 /// Compatibility structure - complete performance metrics
@@ -181,6 +197,7 @@ impl PerformanceMetrics {
             process_count: 0,
             events_processed: 0,
             processing_stats: default_stats.clone(),
+            latency_stats: default_stats.clone(),
         };
 
         Self {
@@ -250,8 +267,9 @@ impl HighPerformanceMetrics {
         let index = event_type.as_index();
         let (process_count, events_processed, _) = self.event_metrics[index].get_counts();
         let processing_stats = self.event_metrics[index].get_processing_stats();
+        let latency_stats = self.event_metrics[index].get_latency_stats();
 
-        EventMetricsSnapshot { process_count, events_processed, processing_stats }
+        EventMetricsSnapshot { process_count, events_processed, processing_stats, latency_stats }
     }
 
     /// 获取处理时间统计
@@ -361,6 +379,18 @@ impl MetricsManager {
         GLOBAL_METRICS.processing_stats.update(processing_time_us, count);
     }
 
+    /// 记录网络延迟（非阻塞）
+    #[inline]
+    pub fn record_latency(&self, event_type: EventType, latency_us: f64) {
+        if !self.is_enabled() {
+            return;
+        }
+
+        let index = event_type.as_index();
+        // 原子更新该事件类型的延迟统计
+        GLOBAL_METRICS.event_metrics[index].update_latency_stats(latency_us, 1);
+    }
+
     /// 记录慢处理操作
     #[inline]
     pub fn log_slow_processing(&self, processing_time_us: f64, event_count: usize) {
@@ -400,24 +430,26 @@ impl MetricsManager {
             println!("\n⚠️  Dropped Events: {}", dropped_count);
         }
 
-        // 打印事件指标表格（包含处理时间统计）
-        println!("┌─────────────┬──────────────┬──────────────────┬─────────────┬─────────────┐");
-        println!("│ Event Type  │ Process Count│ Events Processed │ Last(μs)    │ Avg(μs)     │");
-        println!("├─────────────┼──────────────┼──────────────────┼─────────────┼─────────────┤");
+        // 打印事件指标表格（包含处理时间统计和网络延迟）
+        println!("┌─────────────┬──────────────┬──────────────────┬─────────────┬─────────────┬──────────────┬──────────────┐");
+        println!("│ Event Type  │ Process Count│ Events Processed │ Last(μs)    │ Avg(μs)     │ Latency(μs)  │ Avg Lat(μs)  │");
+        println!("├─────────────┼──────────────┼──────────────────┼─────────────┼─────────────┼──────────────┼──────────────┤");
 
         for event_type in [EventType::Transaction, EventType::Account, EventType::BlockMeta] {
             let metrics = self.get_event_metrics(event_type);
             println!(
-                "│ {:11} │ {:12} │ {:16} │ {:9.2}   │ {:9.2}   │",
+                "│ {:11} │ {:12} │ {:16} │ {:9.2}   │ {:9.2}   │ {:10.2}   │ {:10.2}   │",
                 event_type.name(),
                 metrics.process_count,
                 metrics.events_processed,
                 metrics.processing_stats.last_us,
-                metrics.processing_stats.avg_us
+                metrics.processing_stats.avg_us,
+                metrics.latency_stats.last_us,
+                metrics.latency_stats.avg_us
             );
         }
 
-        println!("└─────────────┴──────────────┴──────────────────┴─────────────┴─────────────┘");
+        println!("└─────────────┴──────────────┴──────────────────┴─────────────┴─────────────┴──────────────┴──────────────┘");
         println!();
     }
 

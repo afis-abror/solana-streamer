@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
 
     client
         .shredstream_subscribe(protocols, None, None, |event| {
-            // info!("📊 DEX Event: {:?}", event);
+            info!("📊 DEX Event: {:?}", event);
         })
         .await?;
 

@@ -390,6 +390,23 @@ impl ShrederClient {
                             // Capture receive time IMMEDIATELY with high-perf clock
                             let receive_us = get_high_perf_clock();
                             
+                            // Calculate network latency if created_at timestamp is available
+                            if let Some(created_at) = &message.created_at {
+                                let created_us = (created_at.seconds as i64 * 1_000_000) + (created_at.nanos as i64 / 1000);
+                                let latency_us = (receive_us - created_us) as f64;
+                                
+                                // Record latency metric
+                                MetricsManager::global().record_latency(
+                                    crate::streaming::common::EventType::Transaction,
+                                    latency_us
+                                );
+                                
+                                // Log if latency is high
+                                if latency_us > 50000.0 { // > 50ms
+                                    log::warn!("High network latency detected: {:.2}ms", latency_us / 1000.0);
+                                }
+                            }
+                            
                             if let Some(transaction_update) = &message.transaction {
                                 let slot = transaction_update.slot;
                                 

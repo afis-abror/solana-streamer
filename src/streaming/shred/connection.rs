@@ -7,6 +7,7 @@ use crate::protos::shredstream::shredstream_proxy_client::ShredstreamProxyClient
 use crate::streaming::common::{
     MetricsManager, PerformanceMetrics, StreamClientConfig, SubscriptionHandle,
 };
+use crate::streaming::storage::TransactionStorage;
 
 /// ShredStream gRPC 客户端
 #[derive(Clone)]
@@ -14,6 +15,8 @@ pub struct ShredStreamGrpc {
     pub shredstream_client: Arc<ShredstreamProxyClient<Channel>>,
     pub config: StreamClientConfig,
     pub subscription_handle: Arc<Mutex<Option<SubscriptionHandle>>>,
+    pub transactions: Arc<TransactionStorage>,
+    pub endpoint: String,
 }
 
 impl ShredStreamGrpc {
@@ -24,13 +27,30 @@ impl ShredStreamGrpc {
 
     /// 创建客户端，使用自定义配置
     pub async fn new_with_config(endpoint: String, config: StreamClientConfig) -> AnyResult<Self> {
-        let shredstream_client = ShredstreamProxyClient::connect(endpoint.clone()).await?;
+        let storage = Arc::new(TransactionStorage::new());
+        Self::new_with_storage(endpoint, config, storage).await
+    }
+
+    /// 创建客户端，使用自定义配置和共享的 TransactionStorage
+    pub async fn new_with_storage(
+        endpoint: String,
+        config: StreamClientConfig,
+        storage: Arc<TransactionStorage>,
+    ) -> AnyResult<Self> {
+        let shredstream_client = Self::create_client(&endpoint).await?;
         MetricsManager::init(config.enable_metrics);
         Ok(Self {
             shredstream_client: Arc::new(shredstream_client),
             config,
             subscription_handle: Arc::new(Mutex::new(None)),
+            transactions: storage,
+            endpoint,
         })
+    }
+
+    /// 创建 gRPC 客户端连接
+    pub(crate) async fn create_client(endpoint: &str) -> AnyResult<ShredstreamProxyClient<Channel>> {
+        Ok(ShredstreamProxyClient::connect(endpoint.to_string()).await?)
     }
 
     /// 获取当前配置
