@@ -395,6 +395,7 @@ impl ShrederClient {
                                 let created_us = (created_at.seconds as i64 * 1_000_000) + (created_at.nanos as i64 / 1000);
                                 let latency_us = (receive_us - created_us) as f64;
                                 
+                                
                                 // Record latency metric
                                 MetricsManager::global().record_latency(
                                     crate::streaming::common::EventType::Transaction,
@@ -408,16 +409,7 @@ impl ShrederClient {
                             }
                             
                             if let Some(transaction_update) = &message.transaction {
-                                let slot = transaction_update.slot;
-                                
-                                // Prepare log message for latency monitoring
-                                if block_time_cache.is_some() {
-                                    crate::streaming::blocktime::prepare_log_message(
-                                        slot,
-                                        &transactions_by_slot,
-                                    )
-                                    .await;
-                                }
+                                // let slot = transaction_update.slot;
                                 
                                 if let Some(shreder_tx) = transaction_update.transaction.as_ref() {
                                     let versioned_tx =
@@ -444,6 +436,7 @@ impl ShrederClient {
                                             versioned_tx.clone(),
                                         )
                                         .await;
+                                    
                                     let transaction_with_slot =
                                         factory::create_transaction_with_slot_pooled(
                                             versioned_tx,
