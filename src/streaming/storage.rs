@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
+    time::Duration,
 };
 
 use solana_sdk::transaction::VersionedTransaction;
@@ -12,6 +13,7 @@ pub struct TransactionStorage {
     processed_signatures: Arc<Mutex<HashSet<String>>>,
 }
 
+
 impl TransactionStorage {
     pub fn new() -> Self {
         Self {
@@ -21,7 +23,22 @@ impl TransactionStorage {
     }
 
     pub async fn insert(&self, key: String, tx: VersionedTransaction) {
-        self.transactions.lock().await.insert(key, tx);
+        let mut transactions = self.transactions.lock().await;
+        
+        // Check if key already exists, if yes, skip insertion
+        if transactions.contains_key(&key) {
+            return;
+        }
+        
+        transactions.insert(key.clone(), tx);
+        drop(transactions); // Release lock before spawning task
+        
+        // Auto-delete after 5 seconds
+        let transactions = self.transactions.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            transactions.lock().await.remove(&key);
+        });
     }
 
     pub async fn get(&self, key: &str) -> Option<VersionedTransaction> {
