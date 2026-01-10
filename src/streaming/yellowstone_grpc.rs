@@ -7,6 +7,7 @@ use crate::streaming::event_parser::common::filter::EventTypeFilter;
 use crate::streaming::event_parser::{DexEvent, Protocol};
 use crate::streaming::grpc::pool::factory;
 use crate::streaming::grpc::{EventPretty, SubscriptionManager};
+use crate::streaming::storage::TransactionStorage;
 use anyhow::anyhow;
 use chrono::Local;
 use futures::channel::mpsc;
@@ -19,6 +20,13 @@ use tokio::sync::Mutex;
 use yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::geyser::{
     CommitmentLevel, SubscribeRequest, SubscribeRequestFilterAccountsFilter, SubscribeRequestPing,
+};
+
+use solana_sdk::{
+    hash::Hash,
+    message::{Message, MessageHeader, VersionedMessage},
+    signature::Signature,
+    transaction::VersionedTransaction,
 };
 
 /// 交易过滤器
@@ -43,6 +51,7 @@ pub struct YellowstoneGrpc {
     pub config: StreamClientConfig,
     pub subscription_manager: SubscriptionManager,
     pub subscription_handle: Arc<Mutex<Option<SubscriptionHandle>>>,
+    pub transactions: Arc<TransactionStorage>,
     // Dynamic subscription management fields
     pub active_subscription: Arc<AtomicBool>,
     pub control_tx: Arc<tokio::sync::Mutex<Option<mpsc::Sender<SubscribeRequest>>>>,
@@ -74,6 +83,33 @@ impl YellowstoneGrpc {
             config,
             subscription_manager,
             subscription_handle: Arc::new(Mutex::new(None)),
+            transactions: Arc::new(TransactionStorage::new()),
+            active_subscription: Arc::new(AtomicBool::new(false)),
+            control_tx: Arc::new(tokio::sync::Mutex::new(None)),
+            current_request: Arc::new(tokio::sync::RwLock::new(None)),
+            event_type_filter: Arc::new(tokio::sync::RwLock::new(None)),
+        })
+    }
+
+    /// 创建客户端，使用自定义配置和共享的 TransactionStorage
+    pub fn new_with_storage(
+        endpoint: String,
+        x_token: Option<String>,
+        config: StreamClientConfig,
+        storage: Arc<TransactionStorage>,
+    ) -> AnyResult<Self> {
+        let _ = rustls::crypto::ring::default_provider().install_default().ok();
+        let subscription_manager =
+            SubscriptionManager::new(endpoint.clone(), x_token.clone(), config.clone());
+        MetricsManager::init(config.enable_metrics);
+
+        Ok(Self {
+            endpoint,
+            x_token,
+            config,
+            subscription_manager,
+            subscription_handle: Arc::new(Mutex::new(None)),
+            transactions: storage,
             active_subscription: Arc::new(AtomicBool::new(false)),
             control_tx: Arc::new(tokio::sync::Mutex::new(None)),
             current_request: Arc::new(tokio::sync::RwLock::new(None)),
@@ -158,7 +194,7 @@ impl YellowstoneGrpc {
             metrics_handle = MetricsManager::global().start_auto_monitoring().await;
         }
 
-        let transactions = self
+        let transaction_filters = self
             .subscription_manager
             .get_subscribe_request_filter(transaction_filter, event_type_filter.as_ref());
         let accounts = self
@@ -168,7 +204,7 @@ impl YellowstoneGrpc {
         // 订阅事件
         let (subscribe_tx, mut stream, subscribe_request) = self
             .subscription_manager
-            .subscribe_with_request(transactions, accounts, commitment, event_type_filter.as_ref())
+            .subscribe_with_request(transaction_filters, accounts, commitment, event_type_filter.as_ref())
             .await?;
 
         // 用 Arc<Mutex<>> 包装 subscribe_tx 以支持多线程共享
@@ -176,6 +212,9 @@ impl YellowstoneGrpc {
         *self.current_request.write().await = Some(subscribe_request);
         let (control_tx, mut control_rx) = mpsc::channel(100);
         *self.control_tx.lock().await = Some(control_tx);
+        
+        // Clone transactions storage for use in async block
+        let transactions = self.transactions.clone();
 
         // Wrap callback once before the async block
         let callback = Arc::new(callback);
@@ -225,6 +264,17 @@ impl YellowstoneGrpc {
                                             transaction_pretty.signature,
                                             transaction_pretty.slot
                                         );
+                                        
+                                        // Store transaction to storage before processing
+                                        if let Ok(versioned_tx) = convert_grpc_to_versioned_transaction(&transaction_pretty.grpc_tx) {
+                                            transactions
+                                                .insert(
+                                                    transaction_pretty.signature.to_string(),
+                                                    versioned_tx,
+                                                )
+                                                .await;
+                                        }
+                                        
                                         if let Err(e) = process_grpc_transaction(
                                             EventPretty::Transaction(transaction_pretty),
                                             &protocols,
@@ -352,10 +402,129 @@ impl Clone for YellowstoneGrpc {
             config: self.config.clone(),
             subscription_manager: self.subscription_manager.clone(),
             subscription_handle: self.subscription_handle.clone(), // 共享同一个 Arc<Mutex<>>
+            transactions: self.transactions.clone(),
             active_subscription: self.active_subscription.clone(),
             control_tx: self.control_tx.clone(),
             event_type_filter: self.event_type_filter.clone(),
             current_request: self.current_request.clone(),
         }
     }
+}
+
+/// Convert gRPC transaction to VersionedTransaction
+fn convert_grpc_to_versioned_transaction(
+    grpc_tx: &yellowstone_grpc_proto::geyser::SubscribeUpdateTransactionInfo,
+) -> AnyResult<VersionedTransaction> {
+    let tx_data = grpc_tx
+        .transaction
+        .as_ref()
+        .ok_or_else(|| anyhow!("Missing transaction data"))?;
+
+    // Convert signatures
+    let mut signatures = Vec::new();
+    for sig_bytes in &tx_data.signatures {
+        if sig_bytes.len() != 64 {
+            return Err(anyhow!("Invalid signature length: {}", sig_bytes.len()));
+        }
+        let mut sig_array = [0u8; 64];
+        sig_array.copy_from_slice(sig_bytes);
+        signatures.push(Signature::from(sig_array));
+    }
+
+    // Extract message
+    let grpc_msg = tx_data
+        .message
+        .as_ref()
+        .ok_or_else(|| anyhow!("Missing message in transaction"))?;
+
+    // Convert message header
+    let header = grpc_msg
+        .header
+        .as_ref()
+        .ok_or_else(|| anyhow!("Missing header in message"))?;
+
+    let message_header = MessageHeader {
+        num_required_signatures: header.num_required_signatures as u8,
+        num_readonly_signed_accounts: header.num_readonly_signed_accounts as u8,
+        num_readonly_unsigned_accounts: header.num_readonly_unsigned_accounts as u8,
+    };
+
+    // Convert account keys
+    let mut account_keys = Vec::new();
+    for key_bytes in &grpc_msg.account_keys {
+        if key_bytes.len() != 32 {
+            return Err(anyhow!("Invalid pubkey length: {}", key_bytes.len()));
+        }
+        account_keys.push(Pubkey::new_from_array(
+            key_bytes.as_slice().try_into().unwrap(),
+        ));
+    }
+
+    // Convert recent blockhash
+    if grpc_msg.recent_blockhash.len() != 32 {
+        return Err(anyhow!(
+            "Invalid blockhash length: {}",
+            grpc_msg.recent_blockhash.len()
+        ));
+    }
+    let mut hash_array = [0u8; 32];
+    hash_array.copy_from_slice(&grpc_msg.recent_blockhash);
+    let recent_blockhash = Hash::new_from_array(hash_array);
+
+    // Convert instructions
+    let mut instructions = Vec::new();
+    for grpc_ix in &grpc_msg.instructions {
+        let compiled_ix = solana_sdk::message::compiled_instruction::CompiledInstruction {
+            program_id_index: grpc_ix.program_id_index as u8,
+            accounts: grpc_ix.accounts.clone(),
+            data: grpc_ix.data.clone(),
+        };
+        instructions.push(compiled_ix);
+    }
+
+    // Create the message based on whether it's versioned
+    let versioned_message = if grpc_msg.versioned {
+        // For V0 messages with address table lookups
+        use solana_sdk::message::v0;
+
+        let mut address_table_lookups = Vec::new();
+        for lookup in &grpc_msg.address_table_lookups {
+            if lookup.account_key.len() != 32 {
+                return Err(anyhow!("Invalid lookup account key length"));
+            }
+            let mut key_array = [0u8; 32];
+            key_array.copy_from_slice(&lookup.account_key);
+            let lookup_key = Pubkey::new_from_array(key_array);
+            address_table_lookups.push(v0::MessageAddressTableLookup {
+                account_key: lookup_key,
+                writable_indexes: lookup.writable_indexes.clone(),
+                readonly_indexes: lookup.readonly_indexes.clone(),
+            });
+        }
+
+        let v0_message = v0::Message {
+            header: message_header,
+            account_keys,
+            recent_blockhash,
+            instructions,
+            address_table_lookups,
+        };
+
+        VersionedMessage::V0(v0_message)
+    } else {
+        // Legacy message
+        let legacy_message = Message {
+            header: message_header,
+            account_keys,
+            recent_blockhash,
+            instructions,
+        };
+
+        VersionedMessage::Legacy(legacy_message)
+    };
+
+    Ok(VersionedTransaction {
+        signatures,
+        message: versioned_message,
+    })
 }
