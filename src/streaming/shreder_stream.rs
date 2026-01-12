@@ -1,10 +1,6 @@
 use crate::common::AnyResult;
-use crate::protos::shreder;
-use crate::protos::shreder::{
-    shreder_service_client::ShrederServiceClient, SubscribeRequestFilterTransactions,
-    SubscribeTransactionsRequest,
-};
-use crate::streaming::blocktime::BlockTimeCache;
+use crate::protos::shreder::shreder_service_client::ShrederServiceClient;
+use crate::protos::shreder::SubscribeEntriesRequest;
 use crate::streaming::common::{
     process_shred_transaction, MetricsManager, StreamClientConfig, SubscriptionHandle,
 };
@@ -13,43 +9,15 @@ use crate::streaming::event_parser::common::high_performance_clock::get_high_per
 use crate::streaming::event_parser::{DexEvent, Protocol};
 use crate::streaming::shred::factory;
 use crate::streaming::storage::TransactionStorage;
-use anyhow;
-use chrono::{DateTime, Utc};
-use futures::SinkExt;
 use log::{error, info, warn};
-use solana_sdk::{
-    hash::Hash,
-    message::compiled_instruction::CompiledInstruction,
-    message::{Message, MessageHeader, VersionedMessage},
-    pubkey::Pubkey,
-    signature::Signature,
-    transaction::VersionedTransaction,
-};
-use std::collections::HashMap;
+use solana_entry::entry::Entry;
+use solana_sdk::{pubkey::Pubkey, transaction::VersionedTransaction};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
 use tonic::transport::{Channel, Endpoint};
-
-/// Comprehensive transaction age metrics
-#[derive(Debug, Clone)]
-pub struct TransactionAgeMetrics {
-    /// When the transaction was received (UTC)
-    pub received_at: chrono::DateTime<chrono::Utc>,
-    /// Transaction receive timestamp (high-perf clock, microseconds)
-    pub receive_timestamp_us: i64,
-    /// When Shreder created/sent the transaction (for reference only)
-    pub shreder_created_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Observed delay between Shreder timestamp and receive time
-    /// WARNING: This includes clock drift and may not reflect actual network latency
-    pub observed_delay_us: i64,
-    /// Transaction slot number
-    pub slot: u64,
-    /// Recent blockhash from the transaction
-    pub recent_blockhash: Hash,
-}
 
 /// Shreder gRPC streaming client for transaction subscriptions
 #[derive(Clone)]
@@ -60,9 +28,6 @@ pub struct ShrederClient {
     pub transactions: Arc<TransactionStorage>,
     pub endpoint: String,
     pub local_addr: Option<IpAddr>,
-    pub block_time_cache: Option<BlockTimeCache>,
-    pub transactions_by_slot: Arc<Mutex<HashMap<u64, Vec<(String, DateTime<Utc>)>>>>,
-    pub rpc_endpoint: Option<String>,
 }
 
 impl ShrederClient {
@@ -97,9 +62,6 @@ impl ShrederClient {
             transactions: Arc::new(TransactionStorage::new()),
             endpoint,
             local_addr,
-            block_time_cache: None,
-            transactions_by_slot: Arc::new(Mutex::new(HashMap::new())),
-            rpc_endpoint: None,
         })
     }
 
@@ -126,16 +88,7 @@ impl ShrederClient {
             transactions: storage,
             endpoint,
             local_addr,
-            block_time_cache: None,
-            transactions_by_slot: Arc::new(Mutex::new(HashMap::new())),
-            rpc_endpoint: None,
         })
-    }
-
-    /// Enable latency monitoring with RPC endpoint
-    pub fn enable_latency_monitoring(&mut self, rpc_endpoint: String) {
-        self.rpc_endpoint = Some(rpc_endpoint.clone());
-        self.block_time_cache = Some(BlockTimeCache::new(&rpc_endpoint));
     }
 
     async fn create_client(
@@ -234,46 +187,9 @@ impl ShrederClient {
         let protocols_clone = protocols.clone();
         let callback = Arc::new(callback);
         let transactions = self.transactions.clone();
-        let transactions_by_slot = self.transactions_by_slot.clone();
-        let block_time_cache = self.block_time_cache.clone();
 
-        // Start latency monitoring task if enabled
-        let latency_handle = if let Some(cache) = block_time_cache.clone() {
-            let transactions_by_slot_clone = transactions_by_slot.clone();
-            Some(tokio::spawn(async move {
-                crate::streaming::blocktime::latency_monitor_task(cache, transactions_by_slot_clone).await;
-            }))
-        } else {
-            None
-        };
-
-        // Create the subscription request
-        let mut transaction_filters = HashMap::new();
-        for protocol in &protocols {
-            let program_ids = protocol.get_program_id();
-            let program_id_strings: Vec<String> =
-                program_ids.iter().map(|pubkey| pubkey.to_string()).collect();
-
-            let filter_name = match protocol {
-                Protocol::PumpFun => "pumpfun",
-                Protocol::PumpSwap => "pumpswap",
-                Protocol::RaydiumAmmV4 => "raydium_amm_v4",
-                Protocol::RaydiumClmm => "raydium_clmm",
-                Protocol::RaydiumCpmm => "raydium_cpmm",
-                Protocol::Bonk => "bonk",
-            };
-
-            transaction_filters.insert(
-                filter_name.to_owned(),
-                SubscribeRequestFilterTransactions {
-                    account_exclude: vec![],
-                    account_include: vec![],
-                    account_required: program_id_strings,
-                },
-            );
-        }
-
-        let request = SubscribeTransactionsRequest { transactions: transaction_filters };
+        // Create the subscription request for entries (no filters, client-side filtering)
+        let request = SubscribeEntriesRequest {};
 
         let stream_task = tokio::spawn(async move {
             let mut retry_attempt = 0u32;
@@ -340,13 +256,11 @@ impl ShrederClient {
                 };
 
                 let mut client = client;
-                let (mut subscribe_tx, subscribe_rx) =
-                    futures::channel::mpsc::unbounded::<SubscribeTransactionsRequest>();
 
                 // Attempt to create stream
                 let stream_result = timeout(
                     Duration::from_secs(connection_config.request_timeout),
-                    client.subscribe_transactions(subscribe_rx),
+                    client.subscribe_entries(tonic::Request::new(request.clone())),
                 )
                 .await;
 
@@ -370,101 +284,58 @@ impl ShrederClient {
                     }
                 };
 
-                // Send the initial request
-                if let Err(e) = subscribe_tx.send(request.clone()).await {
-                    error!("Failed to send subscription request: {:?}", e);
-                    if !auto_reconnect_config.enabled {
-                        break;
-                    }
-                    retry_attempt += 1;
-                    continue;
-                }
-
-                info!("Successfully connected and subscribed to shreder stream");
+                info!("Successfully connected and subscribed to shreder entries stream");
                 retry_attempt = 0; // Reset retry counter on successful connection
 
                 // Process stream messages
                 let stream_broken = loop {
-                    match stream.message().await {
-                        Ok(Some(message)) => {
-                            // Capture receive time IMMEDIATELY with high-perf clock
+                    use futures::StreamExt;
+                    match stream.next().await {
+                        Some(Ok(message)) => {
+                            // Capture receive time
                             let receive_us = get_high_perf_clock();
                             
-                            // Calculate network latency if created_at timestamp is available
-                            if let Some(created_at) = &message.created_at {
-                                let created_us = (created_at.seconds as i64 * 1_000_000) + (created_at.nanos as i64 / 1000);
-                                let latency_us = (receive_us - created_us) as f64;
-                                
-                                
-                                // Record latency metric
-                                MetricsManager::global().record_latency(
-                                    crate::streaming::common::EventType::Transaction,
-                                    latency_us
-                                );
-                                
-                                // Log if latency is high
-                                if latency_us > 50000.0 { // > 50ms
-                                    log::warn!("High network latency detected: {:.2}ms", latency_us / 1000.0);
-                                }
-                            }
-                            
-                            if let Some(transaction_update) = &message.transaction {
-                                // let slot = transaction_update.slot;
-                                
-                                if let Some(shreder_tx) = transaction_update.transaction.as_ref() {
-                                    let versioned_tx =
-                                        convert_shreder_to_versioned_transaction(shreder_tx);
-                                    let versioned_tx = match versioned_tx {
-                                        Ok(vtx) => vtx,
-                                        Err(e) => {
-                                            error!(
-                                                "Failed to convert Shreder transaction: {:?}",
-                                                e
-                                            );
-                                            continue;
+                            // Deserialize entries from binary data
+                            if let Ok(entries) = bincode::deserialize::<Vec<Entry>>(&message.entries) {
+                                for entry in entries {
+                                    for transaction in entry.transactions {
+                                        // Store transaction in storage
+                                        if !transaction.signatures.is_empty() {
+                                            transactions
+                                                .insert(
+                                                    transaction.signatures[0].to_string(),
+                                                    transaction.clone(),
+                                                )
+                                                .await;
                                         }
-                                    };
+                                        
+                                        // Create pooled transaction with slot
+                                        let transaction_with_slot =
+                                            factory::create_transaction_with_slot_pooled(
+                                                transaction.clone(),
+                                                message.slot,
+                                                receive_us,
+                                            );
 
-                                    if versioned_tx.signatures.is_empty() {
-                                        continue;
-                                    }
-
-
-                                    transactions
-                                        .insert(
-                                            versioned_tx.signatures[0].to_string(),
-                                            versioned_tx.clone(),
+                                        // Process transaction with filters
+                                        if let Err(e) = process_shred_transaction(
+                                            transaction_with_slot,
+                                            &protocols_clone,
+                                            event_type_filter.as_ref(),
+                                            callback.clone(),
+                                            bot_wallet,
                                         )
-                                        .await;
-                                    
-                                    let transaction_with_slot =
-                                        factory::create_transaction_with_slot_pooled(
-                                            versioned_tx,
-                                            transaction_update.slot,
-                                            receive_us,
-                                        );
-
-                                    if let Err(e) = process_shred_transaction(
-                                        transaction_with_slot,
-                                        &protocols_clone,
-                                        event_type_filter.as_ref(),
-                                        callback.clone(),
-                                        bot_wallet,
-                                    )
-                                    .await
-                                    {
-                                        error!("Error handling message: {e:?}");
+                                        .await
+                                        {
+                                            error!("Error handling message: {e:?}");
+                                        }
                                     }
                                 }
                             } else {
-                                warn!("Received message without transaction data");
+                                warn!("Failed to deserialize entries from message");
                             }
                         }
-                        Ok(None) => {
-                            warn!("Stream ended unexpectedly");
-                            break true; // Stream ended, need to reconnect
-                        }
-                        Err(e) => {
+                        Some(Err(e)) => {
                             error!("Stream error: {:?}", e);
                             // Check if this is a connection error that warrants reconnection
                             let error_str = e.to_string().to_lowercase();
@@ -482,6 +353,10 @@ impl ShrederClient {
                                 break false; // Non-recoverable error, exit
                             }
                         }
+                        None => {
+                            warn!("Stream ended unexpectedly");
+                            break true; // Stream ended, need to reconnect
+                        }
                     }
                 };
 
@@ -494,11 +369,7 @@ impl ShrederClient {
             }
 
             info!("Shreder stream task ended");
-            
-            // Abort latency monitoring task if it exists
-            if let Some(handle) = latency_handle {
-                handle.abort();
-            }
+
         });
 
         let subscription_handle = SubscriptionHandle::new(stream_task, None, metrics_handle);
@@ -520,102 +391,4 @@ impl ShrederClient {
     pub async fn get_transaction(&self, signature: &str) -> Option<VersionedTransaction> {
         self.transactions.get(signature).await
     }
-}
-
-fn convert_shreder_to_versioned_transaction(
-    shreder_tx: &shreder::Transaction,
-) -> AnyResult<solana_sdk::transaction::VersionedTransaction> {
-    // Convert signatures
-    let mut signatures = Vec::new();
-    for sig_bytes in shreder_tx.signatures.clone() {
-        if sig_bytes.len() != 64 {
-            return Err(anyhow::anyhow!("Invalid signature length: {}", sig_bytes.len()));
-        }
-        let mut sig_array = [0u8; 64];
-        sig_array.copy_from_slice(&sig_bytes);
-        signatures.push(Signature::from(sig_array));
-    }
-
-    // Extract message
-    let shreder_msg = shreder_tx
-        .message
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("Missing message in transaction"))?;
-
-    // Convert message header
-    let header = shreder_msg.header.ok_or_else(|| anyhow::anyhow!("Missing header in message"))?;
-
-    let message_header = MessageHeader {
-        num_required_signatures: header.num_required_signatures as u8,
-        num_readonly_signed_accounts: header.num_readonly_signed_accounts as u8,
-        num_readonly_unsigned_accounts: header.num_readonly_unsigned_accounts as u8,
-    };
-
-    // Convert account keys
-    let mut account_keys = Vec::new();
-    for key_bytes in shreder_msg.account_keys {
-        if key_bytes.len() != 32 {
-            return Err(anyhow::anyhow!("Invalid pubkey length: {}", key_bytes.len()));
-        }
-        account_keys.push(Pubkey::new_from_array(key_bytes.try_into().unwrap()));
-    }
-
-    // Convert recent blockhash
-    if shreder_msg.recent_blockhash.len() != 32 {
-        return Err(anyhow::anyhow!(
-            "Invalid blockhash length: {}",
-            shreder_msg.recent_blockhash.len()
-        ));
-    }
-    let mut hash_array = [0u8; 32];
-    hash_array.copy_from_slice(&shreder_msg.recent_blockhash);
-    let recent_blockhash = Hash::new_from_array(hash_array);
-
-    // Convert instructions
-    let mut instructions = Vec::new();
-    for shreder_ix in shreder_msg.instructions {
-        let compiled_ix = CompiledInstruction {
-            program_id_index: shreder_ix.program_id_index as u8,
-            accounts: shreder_ix.accounts,
-            data: shreder_ix.data,
-        };
-        instructions.push(compiled_ix);
-    }
-
-    // Create the message based on whether it's versioned
-    let versioned_message = if shreder_msg.versioned {
-        // For V0 messages with address table lookups
-        use solana_sdk::message::v0;
-
-        let mut address_table_lookups = Vec::new();
-        for lookup in shreder_msg.address_table_lookups {
-            if lookup.account_key.len() != 32 {
-                return Err(anyhow::anyhow!("Invalid lookup account key length"));
-            }
-            let mut key_array = [0u8; 32];
-            key_array.copy_from_slice(&lookup.account_key);
-            let lookup_key = Pubkey::new_from_array(key_array);
-            address_table_lookups.push(v0::MessageAddressTableLookup {
-                account_key: lookup_key,
-                writable_indexes: lookup.writable_indexes,
-                readonly_indexes: lookup.readonly_indexes,
-            });
-        }
-
-        let v0_message = v0::Message {
-            header: message_header,
-            account_keys,
-            recent_blockhash,
-            instructions,
-            address_table_lookups,
-        };
-        VersionedMessage::V0(v0_message)
-    } else {
-        // Legacy message
-        let legacy_message =
-            Message { header: message_header, account_keys, recent_blockhash, instructions };
-        VersionedMessage::Legacy(legacy_message)
-    };
-
-    Ok(VersionedTransaction { signatures, message: versioned_message })
 }

@@ -3,6 +3,7 @@ use futures::future::join_all;
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -14,14 +15,21 @@ pub struct BlockTimeCache {
 
 impl BlockTimeCache {
     pub fn new(rpc_endpoint: &str) -> Self {
+        // Create RPC client with custom timeout (2 seconds instead of default 10s)
+        let rpc_client = RpcClient::new_with_timeout(
+            rpc_endpoint.to_string(),
+            Duration::from_secs(2),
+        );
+        
         Self {
-            rpc_client: Arc::new(RpcClient::new(rpc_endpoint.to_string())),
+            rpc_client: Arc::new(rpc_client),
             cache: Arc::new(Mutex::new(HashMap::new())),
             fetching: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
     pub async fn get_block_time(&self, slot: u64) -> Option<i64> {
+        // Check cache first (fast path)
         {
             let cache = self.cache.lock().await;
             if let Some(time) = cache.get(&slot) {
@@ -29,28 +37,64 @@ impl BlockTimeCache {
             }
         }
 
+        // If not in cache, check if we're already fetching it
+        {
+            let fetching = self.fetching.lock().await;
+            if fetching.contains(&slot) {
+                // Another task is already fetching, return None (ignore for now)
+                return None;
+            }
+        }
+        
+        // Spawn background task to fetch (non-blocking!)
+        let self_clone = self.clone();
+        tokio::spawn(async move {
+            self_clone.fetch_block_time_background(slot).await;
+        });
+        
+        // Return None immediately - next message will get from cache
+        None
+    }
+    
+    async fn fetch_block_time_background(&self, slot: u64) {
+        // Mark as fetching
         {
             let mut fetching = self.fetching.lock().await;
             if fetching.contains(&slot) {
-                return None;
+                return; // Already being fetched
             }
             fetching.insert(slot);
         }
 
+        // Fetch block time from RPC (this runs in background, doesn't block main stream)
+        let rpc_start = std::time::Instant::now();
         let block_time_result = self.rpc_client.get_block_time(slot).await;
+        let rpc_duration = rpc_start.elapsed();
 
         let block_time = match block_time_result {
-            Ok(time) => Some(time),
+            Ok(time) => {
+                // Only log if RPC was slow (>100ms)
+                if rpc_duration.as_millis() > 100 {
+                    println!("[{}] ⏱️  RPC slot {} took {}ms", 
+                        chrono::Utc::now().format("%H:%M:%S%.3f"),
+                        slot, 
+                        rpc_duration.as_millis()
+                    );
+                }
+                Some(time)
+            }
             Err(err) => {
                 if format!("{:?}", err).contains("Block not available") {
+                    // Block not ready yet - don't log, this is normal for fresh slots
                     None
                 } else {
-                    log::error!("Error fetching block time for slot {}: {:?}", slot, err);
+                    log::error!("Error fetching block time for slot {} (took {:.2}ms): {:?}", slot, rpc_duration.as_micros() as f64 / 1000.0, err);
                     None
                 }
             }
         };
 
+        // Cache the result
         {
             let mut cache = self.cache.lock().await;
             if let Some(time) = block_time {
@@ -63,10 +107,9 @@ impl BlockTimeCache {
             }
         }
 
+        // Remove from fetching set
         let mut fetching = self.fetching.lock().await;
         fetching.remove(&slot);
-
-        block_time
     }
 }
 

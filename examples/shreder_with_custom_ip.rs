@@ -1,7 +1,6 @@
 use log::info;
 use solana_streamer_sdk::streaming::event_parser::Protocol;
 use solana_streamer_sdk::streaming::shreder_stream::ShrederClient;
-use std::env;
 use std::net::IpAddr;
 use std::str::FromStr;
 
@@ -12,13 +11,9 @@ async fn main() -> anyhow::Result<()> {
     let endpoint = "http://fra1.shreder.xyz:9991".to_string();
     let local_ip = IpAddr::from_str("84.32.100.151")?;
 
-    let rpc_endpoint = env::var("SOLANA_RPC_ENDPOINT")
-        .unwrap_or_else(|_| "https://api.mainnet-beta.solana.com".to_string());
-
     info!("Connecting to {} from local IP {}", endpoint, local_ip);
 
-    let mut client = ShrederClient::new_with_local_addr(endpoint.clone(), local_ip).await?;
-    client.enable_latency_monitoring(rpc_endpoint);
+    let client = ShrederClient::new_with_local_addr(endpoint.clone(), local_ip).await?;
 
     // Subscribe to protocols
     let protocols = vec![Protocol::PumpFun, Protocol::PumpSwap];
